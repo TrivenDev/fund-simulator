@@ -1,0 +1,8 @@
+__pycache__/
+saved-simulations/
+data/funds.json
+data/update-status.json
+data/update-status.tmp
+.vendor/
+vendor/
+vendor_local/

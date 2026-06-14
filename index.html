@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>模拟基金交易系统</title>
+    <link rel="stylesheet" href="./styles.css?v=20260614-topbar-layout" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="topbar" aria-label="模拟控制台">
+        <div>
+          <p class="eyebrow">1998.01 - 2026.12</p>
+          <h1>模拟基金交易系统</h1>
+        </div>
+        <div class="period-controls" aria-label="模拟交易区间">
+          <label>
+            <span>开始月份</span>
+            <div class="month-picker" data-picker="start">
+              <input id="startMonth" type="hidden" value="1998-01" />
+              <button id="startMonthButton" class="month-trigger" type="button" aria-expanded="false" aria-controls="startMonthPanel">1998-01</button>
+              <div id="startMonthPanel" class="month-panel" hidden>
+                <select id="startYearSelect" aria-label="start year"></select>
+                <div id="startMonthGrid" class="month-grid" aria-label="start month"></div>
+              </div>
+            </div>
+          </label>
+          <label>
+            <span>结束月份</span>
+            <div class="month-picker" data-picker="end">
+              <input id="endMonth" type="hidden" value="2026-12" />
+              <button id="endMonthButton" class="month-trigger" type="button" aria-expanded="false" aria-controls="endMonthPanel">2026-12</button>
+              <div id="endMonthPanel" class="month-panel" hidden>
+                <select id="endYearSelect" aria-label="end year"></select>
+                <div id="endMonthGrid" class="month-grid" aria-label="end month"></div>
+              </div>
+            </div>
+          </label>
+          <label>
+            <span>最多抓取</span>
+            <input id="maxFunds" type="number" min="1" max="1000" step="1" value="1000" />
+          </label>
+          <label>
+            <span>初始资金</span>
+            <input id="initialCapitalInput" type="number" min="1" step="100" value="3000" />
+          </label>
+          <label>
+            <span>买入分配</span>
+            <select id="allocationMode">
+              <option value="equal">均等买入</option>
+              <option value="rank">排名加权</option>
+              <option value="riskAdjusted" selected>排名加权+风险惩罚</option>
+            </select>
+          </label>
+        </div>
+        <div class="actions">
+          <button id="startBtn" class="primary" type="button">开始模拟交易</button>
+          <button id="updateDataBtn" type="button">更新全市场净值</button>
+          <button id="saveBtn" type="button" disabled>保存这次模拟</button>
+        </div>
+      </section>
+
+      <section class="status-grid" aria-label="模拟结果摘要">
+        <article class="metric">
+          <span>初始资金</span>
+          <strong id="initialCapital">3000.00</strong>
+        </article>
+        <article class="metric">
+          <span>期末资产</span>
+          <strong id="finalValue">-</strong>
+        </article>
+        <article class="metric">
+          <span>累计收益</span>
+          <strong id="totalReturn">-</strong>
+        </article>
+        <article class="metric">
+          <span>目标达成</span>
+          <strong id="targetStatus">未模拟</strong>
+        </article>
+      </section>
+
+      <section class="workspace">
+        <aside class="activity-panel" aria-label="模拟过程">
+          <div class="panel-heading">
+            <h2>操作状态</h2>
+            <span id="etaText">预计耗时：-</span>
+          </div>
+          <div class="progress-track">
+            <div id="progressBar" class="progress-bar"></div>
+          </div>
+          <ol id="activityLog" class="activity-log"></ol>
+        </aside>
+
+        <section class="chart-panel" aria-label="资产曲线">
+          <div class="panel-heading">
+            <h2>账户资产曲线</h2>
+            <span id="runMeta">等待开始</span>
+          </div>
+          <canvas id="equityChart" width="900" height="340"></canvas>
+        </section>
+      </section>
+
+      <section class="year-panel" aria-label="年度收益">
+        <div class="panel-heading">
+          <h2>年度收益</h2>
+          <span>目标：每年 20%</span>
+        </div>
+        <div id="yearCards" class="year-cards"></div>
+      </section>
+
+      <section class="table-panel" aria-label="交易记录">
+        <div class="panel-heading">
+          <h2>交易记录</h2>
+          <span id="tradeCount">0 条</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>操作</th>
+                <th>基金名称</th>
+                <th>代码</th>
+                <th>板块</th>
+                <th>买入额度</th>
+                <th>卖出额度</th>
+                <th>卖出时账户余额</th>
+                <th>持仓份额</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody id="tradeTable"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <div id="fundModal" class="modal-backdrop" hidden>
+        <section class="fund-modal" role="dialog" aria-modal="true" aria-labelledby="fundModalTitle">
+          <div class="modal-heading">
+            <div>
+              <h2 id="fundModalTitle">基金历史净值</h2>
+              <p id="fundModalMeta"></p>
+            </div>
+            <button id="fundModalClose" class="icon-button" type="button" aria-label="关闭">×</button>
+          </div>
+          <div id="fundModalStats" class="fund-stats"></div>
+          <canvas id="fundNavChart" width="860" height="340"></canvas>
+        </section>
+      </div>
+    </main>
+
+    <script src="./data/funds.js"></script>
+    <script src="./app.js?v=20260614-topbar-layout"></script>
+  </body>
+</html>
