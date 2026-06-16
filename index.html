@@ -4,7 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>模拟基金交易系统</title>
-    <link rel="stylesheet" href="./styles.css?v=20260616-analysis-panel" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="theme-color" content="#176b87" />
+    <link rel="stylesheet" href="./styles.css?v=20260616-fund-hover-chart" />
   </head>
   <body>
     <main class="app-shell">
@@ -197,12 +199,15 @@
             <button id="fundModalClose" class="icon-button" type="button" aria-label="关闭">×</button>
           </div>
           <div id="fundModalStats" class="fund-stats"></div>
-          <canvas id="fundNavChart" width="860" height="340"></canvas>
+          <div class="fund-chart-wrap">
+            <canvas id="fundNavChart" width="860" height="380"></canvas>
+            <div id="fundChartTooltip" class="fund-chart-tooltip" hidden></div>
+          </div>
         </section>
       </div>
     </main>
 
     <script src="./data/funds.js"></script>
-    <script src="./app.js?v=20260616-analysis-panel"></script>
+    <script src="./app.js?v=20260616-fund-hover-chart"></script>
   </body>
 </html>

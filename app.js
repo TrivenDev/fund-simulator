@@ -63,6 +63,7 @@ const elements = {
   fundModalStats: $("#fundModalStats"),
   fundModalClose: $("#fundModalClose"),
   fundNavChart: $("#fundNavChart"),
+  fundChartTooltip: $("#fundChartTooltip"),
 };
 
 let currentSimulation = null;
@@ -75,6 +76,7 @@ let activeFundPayload = {
 
 let monthBounds = { min: "2022-01", max: PERIOD_MAX_MONTH };
 let openMonthPicker = null;
+let activeFundChart = null;
 
 function money(value) {
   return Number(value).toLocaleString("zh-CN", {
@@ -1001,7 +1003,15 @@ function fundNavStats(fund) {
   };
 }
 
-function renderFundNavChart(fund, stats) {
+function chartLayout(rect) {
+  return {
+    width: rect.width,
+    height: rect.height,
+    padding: { top: 26, right: 28, bottom: 46, left: 62 },
+  };
+}
+
+function renderFundNavChart(fund, stats, hoverIndex = null) {
   const canvas = elements.fundNavChart;
   const ctx = canvas.getContext("2d");
   const rect = canvas.getBoundingClientRect();
@@ -1010,9 +1020,7 @@ function renderFundNavChart(fund, stats) {
   canvas.height = Math.round(rect.height * scale);
   ctx.scale(scale, scale);
 
-  const width = rect.width;
-  const height = rect.height;
-  const padding = { top: 24, right: 24, bottom: 38, left: 58 };
+  const { width, height, padding } = chartLayout(rect);
   const points = stats.nav;
   const values = points.map((point) => point.nav);
   const min = Math.min(...values) * 0.96;
@@ -1029,8 +1037,8 @@ function renderFundNavChart(fund, stats) {
   ctx.fillStyle = "#64707d";
   ctx.font = "12px Microsoft YaHei, sans-serif";
 
-  for (let i = 0; i <= 4; i += 1) {
-    const value = min + (range * i) / 4;
+  for (let i = 0; i <= 6; i += 1) {
+    const value = min + (range * i) / 6;
     const y = yFor(value);
     ctx.beginPath();
     ctx.moveTo(padding.left, y);
@@ -1039,8 +1047,39 @@ function renderFundNavChart(fund, stats) {
     ctx.fillText(value.toFixed(4), 10, y + 4);
   }
 
+  const verticalTicks = Math.min(8, Math.max(2, points.length - 1));
+  for (let i = 0; i <= verticalTicks; i += 1) {
+    const index = Math.round((i / verticalTicks) * (points.length - 1));
+    const x = xFor(index);
+    ctx.strokeStyle = "#edf1f5";
+    ctx.beginPath();
+    ctx.moveTo(x, padding.top);
+    ctx.lineTo(x, height - padding.bottom);
+    ctx.stroke();
+    ctx.fillStyle = "#64707d";
+    ctx.fillText(points[index].date.slice(0, 7), Math.min(x, width - padding.right - 54), height - 16);
+  }
+
+  const gradient = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
+  gradient.addColorStop(0, "rgba(23, 107, 135, 0.18)");
+  gradient.addColorStop(1, "rgba(23, 107, 135, 0.02)");
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    const x = xFor(index);
+    const y = yFor(point.nav);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.lineTo(xFor(points.length - 1), height - padding.bottom);
+  ctx.lineTo(xFor(0), height - padding.bottom);
+  ctx.closePath();
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
   ctx.strokeStyle = stats.return >= 0 ? "#176b87" : "#bf3b3b";
-  ctx.lineWidth = 2.5;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   ctx.beginPath();
   points.forEach((point, index) => {
     const x = xFor(index);
@@ -1050,14 +1089,44 @@ function renderFundNavChart(fund, stats) {
   });
   ctx.stroke();
 
-  ctx.fillStyle = "#344252";
-  ctx.fillText(points[0].date.slice(0, 7), padding.left, height - 14);
-  ctx.fillText(points[points.length - 1].date.slice(0, 7), Math.max(padding.left, width - padding.right - 58), height - 14);
-
   ctx.fillStyle = stats.return >= 0 ? "#1f7a4d" : "#bf3b3b";
   ctx.beginPath();
   ctx.arc(xFor(points.length - 1), yFor(points[points.length - 1].nav), 4, 0, Math.PI * 2);
   ctx.fill();
+
+  if (hoverIndex !== null && points[hoverIndex]) {
+    const point = points[hoverIndex];
+    const x = xFor(hoverIndex);
+    const y = yFor(point.nav);
+    ctx.strokeStyle = "#344252";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x, padding.top);
+    ctx.lineTo(x, height - padding.bottom);
+    ctx.moveTo(padding.left, y);
+    ctx.lineTo(width - padding.right, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = stats.return >= 0 ? "#176b87" : "#bf3b3b";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  activeFundChart = {
+    fund,
+    stats,
+    padding,
+    width,
+    height,
+    xFor,
+    yFor,
+  };
 }
 
 function openFundModal(code) {
@@ -1097,7 +1166,55 @@ function openFundModal(code) {
 
 function closeFundModal() {
   elements.fundModal.hidden = true;
+  elements.fundChartTooltip.hidden = true;
+  activeFundChart = null;
   document.body.classList.remove("modal-open");
+}
+
+function nearestFundPointIndex(mouseX, chart) {
+  const { stats, padding, width } = chart;
+  const count = stats.nav.length;
+  const left = padding.left;
+  const right = width - padding.right;
+  const ratio = Math.max(0, Math.min(1, (mouseX - left) / Math.max(1, right - left)));
+  return Math.max(0, Math.min(count - 1, Math.round(ratio * (count - 1))));
+}
+
+function showFundChartTooltip(index) {
+  if (!activeFundChart || !activeFundChart.stats.nav[index]) return;
+  const { stats, xFor, yFor, width } = activeFundChart;
+  const point = stats.nav[index];
+  const startNav = stats.start.nav;
+  const pointReturn = point.nav / startNav - 1;
+  const x = xFor(index);
+  const y = yFor(point.nav);
+
+  elements.fundChartTooltip.innerHTML = `
+    <strong>${point.date}</strong>
+    <span>单位净值：${point.nav.toFixed(4)}</span>
+    <span>较起点：${percent(pointReturn)}</span>
+  `;
+  elements.fundChartTooltip.hidden = false;
+
+  const tooltipWidth = 152;
+  const left = x > width - tooltipWidth - 24 ? x - tooltipWidth - 12 : x + 12;
+  const top = Math.max(10, y - 38);
+  elements.fundChartTooltip.style.left = `${left}px`;
+  elements.fundChartTooltip.style.top = `${top}px`;
+}
+
+function handleFundChartMove(event) {
+  if (!activeFundChart) return;
+  const rect = elements.fundNavChart.getBoundingClientRect();
+  const index = nearestFundPointIndex(event.clientX - rect.left, activeFundChart);
+  renderFundNavChart(activeFundChart.fund, activeFundChart.stats, index);
+  showFundChartTooltip(index);
+}
+
+function handleFundChartLeave() {
+  if (!activeFundChart) return;
+  elements.fundChartTooltip.hidden = true;
+  renderFundNavChart(activeFundChart.fund, activeFundChart.stats);
 }
 
 function drawChart(result) {
@@ -1424,6 +1541,8 @@ elements.fundModalClose.addEventListener("click", closeFundModal);
 elements.fundModal.addEventListener("click", (event) => {
   if (event.target === elements.fundModal) closeFundModal();
 });
+elements.fundNavChart.addEventListener("mousemove", handleFundChartMove);
+elements.fundNavChart.addEventListener("mouseleave", handleFundChartLeave);
 elements.startMonthButton.addEventListener("click", (event) => {
   event.stopPropagation();
   setMonthPickerOpen("start");
@@ -1463,6 +1582,7 @@ window.addEventListener("resize", () => {
     const code = elements.fundModalMeta.textContent.split(" · ")[0];
     const fund = findFundByCode(code);
     const stats = fund ? fundNavStats(fund) : null;
+    elements.fundChartTooltip.hidden = true;
     if (fund && stats) renderFundNavChart(fund, stats);
   }
 });

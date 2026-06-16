@@ -9,7 +9,9 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import server  # noqa: E402
+from config import FUND_DATA_PATH, FUND_DB_PATH  # noqa: E402
+from fund_data import month_end, month_start, update_fund_data  # noqa: E402
+from jobs import set_update_job, update_result_summary  # noqa: E402
 
 
 def main() -> int:
@@ -22,37 +24,24 @@ def main() -> int:
     args = parser.parse_args()
 
     def progress(**fields: object) -> None:
-        server.set_update_job(jobId=args.job_id, status="running", **fields)
+        """Mirror worker progress to the status file polled by the browser."""
+        set_update_job(jobId=args.job_id, status="running", **fields)
 
     try:
         progress(message="基金净值更新 worker 已启动", progress=0)
-        result = server.update_fund_data(
-            server.month_start(args.start_month),
-            server.month_end(args.end_month),
+        result = update_fund_data(
+            month_start(args.start_month),
+            month_end(args.end_month),
             include_money_funds=args.include_money_funds,
             max_funds=args.max_funds,
             progress_callback=progress,
             job_id=args.job_id,
         )
-        summary = {
-            "ok": True,
-            "updatedAt": result["updatedAt"],
-            "source": result["source"],
-            "indicator": result["indicator"],
-            "startDate": result["startDate"],
-            "endDate": result["endDate"],
-            "catalogCount": result["catalogCount"],
-            "scannedCount": result["scannedCount"],
-            "cachedCount": result.get("cachedCount", 0),
-            "fundCount": result["fundCount"],
-            "excludedMoneyFundCount": result["excludedMoneyFundCount"],
-            "warningCount": result["warningCount"],
-            "warnings": result["warnings"][:20],
-            "durationSeconds": result["durationSeconds"],
-            "path": str(server.FUND_DATA_PATH),
-            "databasePath": str(server.FUND_DB_PATH),
-        }
-        server.set_update_job(
+        summary = update_result_summary(result)
+        # Keep explicit paths in the worker summary to make status logs actionable.
+        summary["path"] = str(FUND_DATA_PATH)
+        summary["databasePath"] = str(FUND_DB_PATH)
+        set_update_job(
             jobId=args.job_id,
             status="complete",
             phase="complete",
@@ -63,7 +52,7 @@ def main() -> int:
         )
         return 0
     except Exception as exc:
-        server.set_update_job(
+        set_update_job(
             jobId=args.job_id,
             status="error",
             phase="error",
