@@ -64,6 +64,9 @@ const elements = {
   fundModalClose: $("#fundModalClose"),
   fundNavChart: $("#fundNavChart"),
   fundChartTooltip: $("#fundChartTooltip"),
+  marketTickerTrack: $("#marketTickerTrack"),
+  marketTickerMeta: $("#marketTickerMeta"),
+  annualModeButtons: document.querySelectorAll("[data-annual-mode]"),
 };
 
 let currentSimulation = null;
@@ -77,6 +80,7 @@ let activeFundPayload = {
 let monthBounds = { min: "2022-01", max: PERIOD_MAX_MONTH };
 let openMonthPicker = null;
 let activeFundChart = null;
+let annualValueMode = "percent";
 
 function money(value) {
   return Number(value).toLocaleString("zh-CN", {
@@ -87,6 +91,18 @@ function money(value) {
 
 function percent(value) {
   return `${(value * 100).toFixed(2)}%`;
+}
+
+function signedMoney(value) {
+  const sign = value >= 0 ? "+" : "-";
+  return `${sign}${money(Math.abs(value))}`;
+}
+
+function compactSignedMoney(value) {
+  const abs = Math.abs(value);
+  const sign = value >= 0 ? "+" : "-";
+  if (abs >= 10000) return `${sign}${(abs / 10000).toFixed(1)}万`;
+  return `${sign}${abs.toLocaleString("zh-CN", { maximumFractionDigits: 0 })}`;
 }
 
 function sleep(ms) {
@@ -116,6 +132,75 @@ function monthLabel(month) {
 
 function currentRawFunds() {
   return activeFundPayload.funds?.length ? activeFundPayload.funds : window.FUND_UNIVERSE;
+}
+
+function normalizeNavPoint(point) {
+  if (Array.isArray(point)) {
+    return { date: point[0], nav: Number(point[1]) };
+  }
+  return { date: point.date, nav: Number(point.nav) };
+}
+
+function latestTickerItems(limit = 80) {
+  const items = [];
+  for (const fund of currentRawFunds() || []) {
+    const nav = (fund.nav || [])
+      .map(normalizeNavPoint)
+      .filter((point) => point.date && Number.isFinite(point.nav) && point.nav > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if (nav.length < 2) continue;
+
+    const latest = nav[nav.length - 1];
+    const previous = nav[nav.length - 2];
+    const change = latest.nav / previous.nav - 1;
+    if (!Number.isFinite(change)) continue;
+
+    items.push({
+      code: fund.code,
+      name: fund.name,
+      date: latest.date,
+      nav: latest.nav,
+      change,
+    });
+  }
+
+  return items
+    .sort((a, b) => b.date.localeCompare(a.date) || Math.abs(b.change) - Math.abs(a.change))
+    .slice(0, limit);
+}
+
+function renderMarketTicker() {
+  const items = latestTickerItems();
+  elements.marketTickerTrack.innerHTML = "";
+  elements.marketTickerMeta.textContent = items.length
+    ? `${items[0].date} · 当前基金池 ${items.length} 条`
+    : "暂无可滚动净值";
+
+  if (items.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "ticker-empty";
+    empty.textContent = "暂无可用基金净值，请先更新数据或检查内置样本。";
+    elements.marketTickerTrack.appendChild(empty);
+    return;
+  }
+
+  const createGroup = () => {
+    const group = document.createElement("div");
+    group.className = "ticker-group";
+    for (const item of items) {
+      const direction = item.change > 0 ? "up" : item.change < 0 ? "down" : "flat";
+      const piece = document.createElement("span");
+      piece.className = `ticker-item ${direction}`;
+      piece.textContent = `${item.name} ${item.nav.toFixed(4)}（${item.change >= 0 ? "+" : ""}${percent(item.change)}）`;
+      piece.title = `${item.code} · ${item.date}`;
+      group.appendChild(piece);
+    }
+    return group;
+  };
+
+  elements.marketTickerTrack.appendChild(createGroup());
+  elements.marketTickerTrack.appendChild(createGroup());
+  elements.marketTickerTrack.style.setProperty("--ticker-duration", `${Math.max(36, Math.min(120, items.length * 3.2))}s`);
 }
 
 function collectAvailableMonths() {
@@ -228,6 +313,7 @@ function setActiveFundPayload(payload, isFallback = false) {
   };
   setupPeriodInputs();
   renderDataQuality();
+  renderMarketTicker();
 }
 
 function dataQualityStats() {
@@ -434,12 +520,7 @@ function resolvePeriodIndices(dates, startMonth, endMonth) {
 function normalizedFunds() {
   return currentRawFunds().map((fund) => ({
     ...fund,
-    nav: fund.nav.map((point) => {
-      if (Array.isArray(point)) {
-        return { date: point[0], nav: Number(point[1]) };
-      }
-      return { date: point.date, nav: Number(point.nav) };
-    }),
+    nav: fund.nav.map(normalizeNavPoint),
   }));
 }
 
@@ -890,19 +971,43 @@ function annualStats(equity, initialCapital = DEFAULT_INITIAL_CAPITAL) {
     grouped.get(year).push(point);
   }
 
-  let previousYearEnd = initialCapital;
+  let previousValue = initialCapital;
   return [...grouped.entries()].map(([year, points]) => {
-    const start = previousYearEnd;
-    const end = points[points.length - 1].value;
-    previousYearEnd = end;
+    const start = previousValue;
+    const monthMap = new Map();
+    const orderedPoints = [...points].sort((a, b) => a.date.localeCompare(b.date));
+    for (const point of orderedPoints) {
+      const monthNumber = Number(point.date.slice(5, 7));
+      const amount = point.value - previousValue;
+      const monthReturn = previousValue > 0 ? point.value / previousValue - 1 : 0;
+      monthMap.set(monthNumber, {
+        month: monthNumber,
+        date: point.date,
+        start: previousValue,
+        end: point.value,
+        amount,
+        return: monthReturn,
+      });
+      previousValue = point.value;
+    }
+    const end = orderedPoints[orderedPoints.length - 1].value;
     return {
       year,
       start,
       end,
       return: end / start - 1,
       hitTarget: end / start - 1 >= TARGET_ANNUAL_RETURN,
+      months: Array.from({ length: 12 }, (_, index) => monthMap.get(index + 1) || null),
     };
   });
+}
+
+function setAnnualValueMode(mode) {
+  annualValueMode = mode === "amount" ? "amount" : "percent";
+  for (const button of elements.annualModeButtons) {
+    button.classList.toggle("active", button.dataset.annualMode === annualValueMode);
+  }
+  if (currentSimulation) renderYears(currentSimulation);
 }
 
 function renderSummary(result) {
@@ -931,10 +1036,30 @@ function renderYears(result) {
   for (const item of result.annual) {
     const card = document.createElement("article");
     card.className = "year-card";
+    const yearlyClass = item.return >= TARGET_ANNUAL_RETURN ? "good" : item.return >= 0 ? "warn" : "bad";
+    const months = item.months || [];
+    const monthCells = months
+      .map((month, index) => {
+        if (!month) {
+          return `<div class="month-return-cell empty"><span>${index + 1}月</span><strong>-</strong></div>`;
+        }
+        const valueClass = month.return > 0 ? "up" : month.return < 0 ? "down" : "flat";
+        const displayValue =
+          annualValueMode === "amount" ? compactSignedMoney(month.amount) : `${month.return >= 0 ? "+" : ""}${percent(month.return)}`;
+        const title = `${item.year}年${index + 1}月：${signedMoney(month.amount)} 元，收益率 ${percent(month.return)}，${money(month.start)} → ${money(month.end)}`;
+        return `<div class="month-return-cell ${valueClass}" title="${title}"><span>${index + 1}月</span><strong>${displayValue}</strong></div>`;
+      })
+      .join("");
+
     card.innerHTML = `
-      <span>${item.year}</span>
-      <strong class="${item.return >= TARGET_ANNUAL_RETURN ? "good" : item.return >= 0 ? "warn" : "bad"}">${percent(item.return)}</strong>
-      <small>${money(item.start)} → ${money(item.end)}</small>
+      <div class="year-card-summary">
+        <div>
+          <span>${item.year}</span>
+          <small>${money(item.start)} → ${money(item.end)}</small>
+        </div>
+        <strong class="${yearlyClass}">${percent(item.return)}</strong>
+      </div>
+      <div class="month-return-grid">${monthCells}</div>
     `;
     elements.yearCards.appendChild(card);
   }
@@ -1528,6 +1653,9 @@ function restoreLastResult() {
 elements.startBtn.addEventListener("click", runSimulation);
 elements.updateDataBtn.addEventListener("click", updateFundData);
 elements.saveBtn.addEventListener("click", saveSimulation);
+for (const button of elements.annualModeButtons) {
+  button.addEventListener("click", () => setAnnualValueMode(button.dataset.annualMode));
+}
 elements.initialCapitalInput.addEventListener("change", getInitialCapital);
 elements.initialCapitalInput.addEventListener("input", () => {
   const raw = Number.parseFloat(elements.initialCapitalInput.value);
@@ -1591,6 +1719,7 @@ async function initialize() {
   getInitialCapital();
   setupPeriodInputs();
   renderDataQuality();
+  renderMarketTicker();
   await loadSavedFundData();
   restoreLastResult();
 }

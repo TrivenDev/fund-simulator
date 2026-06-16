@@ -6,7 +6,7 @@
     <title>模拟基金交易系统</title>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="theme-color" content="#176b87" />
-    <link rel="stylesheet" href="./styles.css?v=20260616-fund-hover-chart" />
+    <link rel="stylesheet" href="./styles.css?v=20260616-year-month-grid-4x3" />
   </head>
   <body>
     <main class="app-shell">
@@ -60,6 +60,14 @@
           <button id="updateDataBtn" type="button">更新全市场净值</button>
           <button id="saveBtn" type="button" disabled>保存这次模拟</button>
         </div>
+      </section>
+
+      <section class="market-ticker" aria-label="最新基金净值滚动行情">
+        <div class="ticker-label">最新净值</div>
+        <div class="ticker-window">
+          <div id="marketTickerTrack" class="ticker-track"></div>
+        </div>
+        <div id="marketTickerMeta" class="ticker-meta">当前基金池</div>
       </section>
 
       <section class="strategy-panel" aria-label="策略参数">
@@ -158,7 +166,13 @@
       <section class="year-panel" aria-label="年度收益">
         <div class="panel-heading">
           <h2>年度收益</h2>
-          <span>目标：每年 20%</span>
+          <div class="year-heading-tools">
+            <span>目标：每年 20%</span>
+            <div class="segmented-control" aria-label="年度收益显示方式">
+              <button class="active" type="button" data-annual-mode="percent">百分比</button>
+              <button type="button" data-annual-mode="amount">金额</button>
+            </div>
+          </div>
         </div>
         <div id="yearCards" class="year-cards"></div>
       </section>
@@ -208,6 +222,6 @@
     </main>
 
     <script src="./data/funds.js"></script>
-    <script src="./app.js?v=20260616-fund-hover-chart"></script>
+    <script src="./app.js?v=20260616-year-month-grid-4x3"></script>
   </body>
 </html>
