@@ -17,7 +17,7 @@ ONLINE_DATA_SOURCE = "AKShare 全市场公募基金数据（fund_name_em + fund_
 AKSHARE_INDICATOR = "单位净值走势"
 EXCLUDE_NAME_KEYWORDS = ("货币", "现金", "理财", "同业存单")
 DEFAULT_SCAN_LIMIT = 1000
-MAX_SCAN_LIMIT = 1000
+MAX_SCAN_LIMIT = 2000
 
 
 def configure_python_paths() -> None:

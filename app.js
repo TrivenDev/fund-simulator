@@ -12,7 +12,7 @@ const ALLOCATION_MODE_LABELS = {
 };
 const PERIOD_MIN_MONTH = "1998-01";
 const PERIOD_MAX_MONTH = "2026-12";
-const MAX_UPDATE_FUNDS = 1000;
+const MAX_UPDATE_FUNDS = 2000;
 const FALLBACK_DATA_SOURCE = "本地内置候选池 data/funds.js（window.FUND_UNIVERSE，月度净值样本，可替换为真实基金净值数据）";
 
 const $ = (selector) => document.querySelector(selector);
@@ -1559,8 +1559,11 @@ async function runSimulation() {
     const funds = normalizedFunds();
     const dates = funds[0].nav.map((point) => point.date);
     const selectedRange = resolvePeriodIndices(dates, period.startMonth, period.endMonth);
-    if (selectedRange.actualStartMonth !== period.startMonth || selectedRange.actualEndMonth !== period.endMonth) {
-      addLog(`当前缓存实际可用净值区间：${selectedRange.actualStartMonth} 至 ${selectedRange.actualEndMonth}。如需更早历史，请先按所选区间更新 AKShare 净值数据。`);
+    if (selectedRange.actualStartMonth > period.startMonth) {
+      throw new Error(`当前缓存最早净值是 ${selectedRange.actualStartMonth}，无法从 ${period.startMonth} 开始模拟。请先按所选区间点击“更新全市场净值”。`);
+    }
+    if (selectedRange.actualEndMonth < period.endMonth) {
+      addLog(`当前缓存实际可用净值只到 ${selectedRange.actualEndMonth}，晚于该月份的区间会自动忽略。`);
     }
     addLog(`已载入 ${funds.length} 只候选基金，本次覆盖 ${selectedRange.steps} 个净值月份。`);
 
