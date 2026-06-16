@@ -144,8 +144,11 @@ function signedMoney(value) {
 function compactSignedMoney(value) {
   const abs = Math.abs(value);
   const sign = value >= 0 ? "+" : "-";
-  if (abs >= 10000) return `${sign}${(abs / 10000).toFixed(1)}万`;
-  return `${sign}${abs.toLocaleString("zh-CN", { maximumFractionDigits: 0 })}`;
+  if (abs >= 10000) return `${sign}${(abs / 10000).toFixed(2)}万`;
+  return `${sign}${abs.toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 }
 
 function sleep(ms) {
