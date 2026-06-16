@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>模拟基金交易系统</title>
-    <link rel="stylesheet" href="./styles.css?v=20260614-topbar-layout" />
+    <link rel="stylesheet" href="./styles.css?v=20260616-analysis-panel" />
   </head>
   <body>
     <main class="app-shell">
@@ -60,6 +60,35 @@
         </div>
       </section>
 
+      <section class="strategy-panel" aria-label="策略参数">
+        <div class="panel-heading">
+          <h2>策略参数</h2>
+          <span>影响买入筛选、持仓数量和仓位上限</span>
+        </div>
+        <div class="strategy-controls">
+          <label>
+            <span>收益排名前 N</span>
+            <input id="topNInput" type="number" min="1" max="50" step="1" value="10" />
+          </label>
+          <label>
+            <span>最多持有</span>
+            <input id="maxHoldingsInput" type="number" min="1" max="10" step="1" value="3" />
+          </label>
+          <label>
+            <span>同板块最多</span>
+            <input id="maxSameSectorInput" type="number" min="1" max="10" step="1" value="2" />
+          </label>
+          <label>
+            <span>持有周期（月）</span>
+            <input id="holdingMonthsInput" type="number" min="1" max="12" step="1" value="1" />
+          </label>
+          <label>
+            <span>单只仓位上限</span>
+            <input id="maxSingleAllocationInput" type="number" min="10" max="100" step="5" value="60" />
+          </label>
+        </div>
+      </section>
+
       <section class="status-grid" aria-label="模拟结果摘要">
         <article class="metric">
           <span>初始资金</span>
@@ -77,6 +106,30 @@
           <span>目标达成</span>
           <strong id="targetStatus">未模拟</strong>
         </article>
+        <article class="metric">
+          <span>年化收益</span>
+          <strong id="cagrMetric">-</strong>
+        </article>
+        <article class="metric">
+          <span>最大回撤</span>
+          <strong id="maxDrawdownMetric">-</strong>
+        </article>
+        <article class="metric">
+          <span>月度胜率</span>
+          <strong id="winRateMetric">-</strong>
+        </article>
+        <article class="metric">
+          <span>收益回撤比</span>
+          <strong id="returnDrawdownMetric">-</strong>
+        </article>
+      </section>
+
+      <section class="quality-panel" aria-label="数据质量">
+        <div class="panel-heading">
+          <h2>数据质量</h2>
+          <span id="dataQualitySource">等待加载</span>
+        </div>
+        <div id="dataQualityCards" class="quality-cards"></div>
       </section>
 
       <section class="workspace">
@@ -150,6 +203,6 @@
     </main>
 
     <script src="./data/funds.js"></script>
-    <script src="./app.js?v=20260614-topbar-layout"></script>
+    <script src="./app.js?v=20260616-analysis-panel"></script>
   </body>
 </html>

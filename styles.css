@@ -35,8 +35,10 @@ body {
 }
 
 .topbar,
+.strategy-panel,
 .status-grid,
 .workspace,
+.quality-panel,
 .year-panel,
 .table-panel {
   margin-bottom: 18px;
@@ -244,6 +246,8 @@ button:disabled {
 .metric,
 .activity-panel,
 .chart-panel,
+.strategy-panel,
+.quality-panel,
 .year-panel,
 .table-panel {
   border: 1px solid var(--border);
@@ -254,6 +258,39 @@ button:disabled {
 
 .metric {
   padding: 16px;
+}
+
+.strategy-panel,
+.quality-panel {
+  padding: 18px;
+}
+
+.strategy-controls {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  gap: 12px;
+}
+
+.strategy-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.strategy-controls input {
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.strategy-controls input:focus {
+  border-color: var(--accent);
+  outline: 2px solid rgba(23, 107, 135, 0.16);
 }
 
 .metric span {
@@ -338,14 +375,22 @@ button:disabled {
   gap: 12px;
 }
 
-.year-card {
+.quality-cards {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.year-card,
+.quality-card {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 14px;
   background: #fbfcfd;
 }
 
-.year-card span {
+.year-card span,
+.quality-card span {
   color: var(--muted);
   font-size: 13px;
 }
@@ -354,6 +399,12 @@ button:disabled {
   display: block;
   margin: 7px 0;
   font-size: 24px;
+}
+
+.quality-card strong {
+  display: block;
+  margin-top: 7px;
+  font-size: 18px;
 }
 
 .year-card small {
@@ -572,6 +623,8 @@ tbody tr:hover {
   .status-grid,
   .workspace,
   .year-cards,
+  .quality-cards,
+  .strategy-controls,
   .fund-stats {
     grid-template-columns: 1fr;
   }

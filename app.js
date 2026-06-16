@@ -34,10 +34,21 @@ const elements = {
   maxFunds: $("#maxFunds"),
   initialCapitalInput: $("#initialCapitalInput"),
   allocationMode: $("#allocationMode"),
+  topNInput: $("#topNInput"),
+  maxHoldingsInput: $("#maxHoldingsInput"),
+  maxSameSectorInput: $("#maxSameSectorInput"),
+  holdingMonthsInput: $("#holdingMonthsInput"),
+  maxSingleAllocationInput: $("#maxSingleAllocationInput"),
   initialCapital: $("#initialCapital"),
   finalValue: $("#finalValue"),
   totalReturn: $("#totalReturn"),
   targetStatus: $("#targetStatus"),
+  cagrMetric: $("#cagrMetric"),
+  maxDrawdownMetric: $("#maxDrawdownMetric"),
+  winRateMetric: $("#winRateMetric"),
+  returnDrawdownMetric: $("#returnDrawdownMetric"),
+  dataQualitySource: $("#dataQualitySource"),
+  dataQualityCards: $("#dataQualityCards"),
   etaText: $("#etaText"),
   progressBar: $("#progressBar"),
   activityLog: $("#activityLog"),
@@ -214,6 +225,63 @@ function setActiveFundPayload(payload, isFallback = false) {
     isFallback,
   };
   setupPeriodInputs();
+  renderDataQuality();
+}
+
+function dataQualityStats() {
+  const funds = currentRawFunds() || [];
+  const monthSet = new Set();
+  const navLengths = [];
+  let fundsWithNav = 0;
+  for (const fund of funds) {
+    const nav = fund.nav || [];
+    if (nav.length > 0) fundsWithNav += 1;
+    navLengths.push(nav.length);
+    for (const point of nav) {
+      const date = Array.isArray(point) ? point[0] : point.date;
+      if (date) monthSet.add(monthOf(date));
+    }
+  }
+  const months = [...monthSet].sort();
+  const maxLength = navLengths.length ? Math.max(...navLengths) : 0;
+  const averageLength = navLengths.length
+    ? navLengths.reduce((sum, value) => sum + value, 0) / navLengths.length
+    : 0;
+  const incompleteCount = navLengths.filter((length) => length > 0 && length < maxLength).length;
+  return {
+    fundCount: funds.length,
+    fundsWithNav,
+    monthCount: months.length,
+    startMonth: months[0] || "-",
+    endMonth: months[months.length - 1] || "-",
+    averageLength,
+    incompleteCount,
+  };
+}
+
+function renderDataQuality() {
+  if (!elements.dataQualityCards) return;
+  const stats = dataQualityStats();
+  elements.dataQualitySource.textContent = activeFundPayload.isFallback ? "当前使用内置样本" : "当前使用 AKShare 本地缓存";
+  elements.dataQualityCards.innerHTML = "";
+  const cards = [
+    ["基金数量", `${stats.fundCount} 只`],
+    ["可用净值", `${stats.fundsWithNav} 只`],
+    ["净值区间", `${stats.startMonth} 至 ${stats.endMonth}`],
+    ["覆盖月份", `${stats.monthCount} 个月`],
+    ["平均长度", `${stats.averageLength.toFixed(1)} 条`],
+    ["不完整数据", `${stats.incompleteCount} 只`],
+  ];
+  for (const [label, value] of cards) {
+    const card = document.createElement("article");
+    card.className = "quality-card";
+    const labelNode = document.createElement("span");
+    const valueNode = document.createElement("strong");
+    labelNode.textContent = label;
+    valueNode.textContent = value;
+    card.append(labelNode, valueNode);
+    elements.dataQualityCards.appendChild(card);
+  }
 }
 
 function setupPeriodInputs() {
@@ -265,6 +333,25 @@ function getAllocationMode() {
   return ALLOCATION_MODE_LABELS[mode] ? mode : "riskAdjusted";
 }
 
+function readBoundedInteger(input, fallback, min, max) {
+  const raw = Number.parseInt(input.value, 10);
+  const value = Number.isFinite(raw) ? Math.max(min, Math.min(max, raw)) : fallback;
+  input.value = String(value);
+  return value;
+}
+
+function getStrategyOptions() {
+  const maxHoldings = readBoundedInteger(elements.maxHoldingsInput, MAX_HOLDINGS, 1, 10);
+  const maxSameSector = readBoundedInteger(elements.maxSameSectorInput, MAX_SAME_SECTOR, 1, maxHoldings);
+  return {
+    topN: readBoundedInteger(elements.topNInput, ROTATION_TOP_N, 1, 50),
+    maxHoldings,
+    maxSameSector,
+    holdingMonths: readBoundedInteger(elements.holdingMonthsInput, 1, 1, 12),
+    maxSingleAllocation: readBoundedInteger(elements.maxSingleAllocationInput, Math.round(MAX_SINGLE_ALLOCATION * 100), 10, 100) / 100,
+  };
+}
+
 function capAllocations(items, maxSingleAllocation = MAX_SINGLE_ALLOCATION) {
   const allocations = items.map((item) => ({ ...item }));
   let guard = 0;
@@ -285,10 +372,10 @@ function capAllocations(items, maxSingleAllocation = MAX_SINGLE_ALLOCATION) {
   return allocations.map((item) => ({ ...item, allocation: total > 0 ? item.allocation / total : 0 }));
 }
 
-function allocationScore(item, index, allocationMode, sectorSeen) {
+function allocationScore(item, index, allocationMode, sectorSeen, strategy) {
   if (allocationMode === "equal") return 1;
 
-  let score = Math.max(1, ROTATION_TOP_N - item.rank + 1);
+  let score = Math.max(1, strategy.topN - item.rank + 1);
   if (allocationMode === "riskAdjusted") {
     const drawdown = Math.abs(maxDrawdown(item.fund, index, 6));
     const vol = volatility(item.fund, index, 6);
@@ -302,18 +389,21 @@ function allocationScore(item, index, allocationMode, sectorSeen) {
   return Math.max(0.01, score);
 }
 
-function applyAllocationWeights(selectedItems, index, allocationMode) {
+function applyAllocationWeights(selectedItems, index, allocationMode, strategy = getStrategyOptions()) {
   if (selectedItems.length === 0) return [];
   const sectorSeen = new Map();
   const scored = selectedItems.map((item) => ({
     ...item,
-    allocationScore: allocationScore(item, index, allocationMode, sectorSeen),
+    allocationScore: allocationScore(item, index, allocationMode, sectorSeen, strategy),
   }));
   const totalScore = scored.reduce((sum, item) => sum + item.allocationScore, 0);
   if (totalScore <= 0) {
     return scored.map((item) => ({ ...item, allocation: 1 / scored.length }));
   }
-  return capAllocations(scored.map((item) => ({ ...item, allocation: item.allocationScore / totalScore })));
+  return capAllocations(
+    scored.map((item) => ({ ...item, allocation: item.allocationScore / totalScore })),
+    strategy.maxSingleAllocation
+  );
 }
 
 function resolvePeriodIndices(dates, startMonth, endMonth) {
@@ -441,10 +531,10 @@ function monthlyReturnRank(funds, index) {
     .map((item, index) => ({ ...item, rank: index + 1 }));
 }
 
-function chooseMonthlyRotationFunds(funds, index) {
+function chooseMonthlyRotationFunds(funds, index, strategy) {
   const sectorCount = new Map();
   const selected = [];
-  const topTen = monthlyReturnRank(funds, index).slice(0, ROTATION_TOP_N);
+  const topTen = monthlyReturnRank(funds, index).slice(0, strategy.topN);
   const preferred = [...topTen].sort((a, b) => {
     if (a.fund.type === "C" && b.fund.type !== "C") return -1;
     if (a.fund.type !== "C" && b.fund.type === "C") return 1;
@@ -453,10 +543,10 @@ function chooseMonthlyRotationFunds(funds, index) {
 
   for (const item of preferred) {
     const count = sectorCount.get(item.fund.sector) ?? 0;
-    if (count >= MAX_SAME_SECTOR) continue;
+    if (count >= strategy.maxSameSector) continue;
     selected.push(item);
     sectorCount.set(item.fund.sector, count + 1);
-    if (selected.length === MAX_HOLDINGS) break;
+    if (selected.length === strategy.maxHoldings) break;
   }
 
   return selected;
@@ -590,14 +680,14 @@ function liquidateAll({ date, index, cash, holdings, trades, action, note }) {
   return { cash, holdings: [] };
 }
 
-function buyRotationPortfolio({ date, index, cash, selectedItems, trades, allocationMode }) {
+function buyRotationPortfolio({ date, index, cash, selectedItems, trades, allocationMode, strategy }) {
   const holdings = [];
   if (selectedItems.length === 0 || cash <= 0) {
     return { cash, holdings };
   }
 
   const startCash = cash;
-  const allocatedItems = applyAllocationWeights(selectedItems, index, allocationMode);
+  const allocatedItems = applyAllocationWeights(selectedItems, index, allocationMode, strategy);
   for (const item of allocatedItems) {
     const buyAmount = Math.min(startCash * item.allocation, cash);
     const nav = navAt(item.fund, index);
@@ -621,7 +711,7 @@ function buyRotationPortfolio({ date, index, cash, selectedItems, trades, alloca
         buyAmount,
         balance: cash + portfolioValue(0, holdings, index),
         shares,
-        note: `本月收益排名第 ${item.rank}/${ROTATION_TOP_N}，本月收益 ${percent(item.monthlyReturn)}，${ALLOCATION_MODE_LABELS[allocationMode]}，买入权重 ${percent(item.allocation)}，计划持有约 1 个月`,
+        note: `本月收益排名第 ${item.rank}/${strategy.topN}，本月收益 ${percent(item.monthlyReturn)}，${ALLOCATION_MODE_LABELS[allocationMode]}，买入权重 ${percent(item.allocation)}，计划持有约 ${strategy.holdingMonths} 个月`,
       })
     );
   }
@@ -636,6 +726,7 @@ function simulate(funds, onStep, options = {}) {
     endMonth = monthOf(dates[dates.length - 1]),
     initialCapital = DEFAULT_INITIAL_CAPITAL,
     allocationMode = "riskAdjusted",
+    strategy = getStrategyOptions(),
   } = options;
   const { startIndex, endIndex, steps } = resolvePeriodIndices(dates, startMonth, endMonth);
   let cash = initialCapital;
@@ -646,9 +737,11 @@ function simulate(funds, onStep, options = {}) {
 
   for (let index = startIndex; index <= endIndex; index += 1) {
     const date = dates[index];
-    onStep(index - startIndex + 1, steps, `正在处理 ${date} 的月度收益前 ${ROTATION_TOP_N} 轮动`);
+    onStep(index - startIndex + 1, steps, `正在处理 ${date} 的月度收益前 ${strategy.topN} 轮动`);
 
-    if (holdings.length > 0) {
+    const holdingAge = holdings.length > 0 ? index - holdings[0].buyIndex : 0;
+    const shouldRotate = holdings.length > 0 && (holdingAge >= strategy.holdingMonths || index === endIndex);
+    if (shouldRotate) {
       ({ cash, holdings } = liquidateAll({
         date,
         index,
@@ -656,12 +749,12 @@ function simulate(funds, onStep, options = {}) {
         holdings,
         trades,
         action: "轮动卖出",
-        note: "持有约 1 个月，到期卖出并进入下一轮",
+        note: `持有约 ${Math.max(1, holdingAge)} 个月，到期卖出并进入下一轮`,
       }));
     }
 
-    if (index > 0 && index < endIndex) {
-      const selectedItems = chooseMonthlyRotationFunds(funds, index);
+    if (holdings.length === 0 && index > 0 && index < endIndex) {
+      const selectedItems = chooseMonthlyRotationFunds(funds, index, strategy);
       const beforeValue = portfolioValue(cash, holdings, index);
       ({ cash, holdings } = buyRotationPortfolio({
         date,
@@ -670,12 +763,13 @@ function simulate(funds, onStep, options = {}) {
         selectedItems,
         trades,
         allocationMode,
+        strategy,
       }));
       decisions.push({
         date,
         action: "monthly-top10-rotation",
         beforeValue,
-        funds: applyAllocationWeights(selectedItems, index, allocationMode).map(
+        funds: applyAllocationWeights(selectedItems, index, allocationMode, strategy).map(
           (item) => `${item.fund.name}(${item.fund.sector}) 第${item.rank}名 ${percent(item.monthlyReturn)} 权重${percent(item.allocation)}`
         ),
       });
@@ -732,9 +826,12 @@ function simulate(funds, onStep, options = {}) {
       targetAnnualReturn: TARGET_ANNUAL_RETURN,
       allocationMode,
       allocationModeLabel: ALLOCATION_MODE_LABELS[allocationMode],
-      maxHoldings: MAX_HOLDINGS,
-      maxSameSector: MAX_SAME_SECTOR,
-      preference: `月度轮动：每月月末卖出上月持仓，再从刚结束月份收益率前 ${ROTATION_TOP_N} 的基金中优先选择 C 类基金，最多持有 ${MAX_HOLDINGS} 只，约 1 个月后卖出`,
+      topN: strategy.topN,
+      maxHoldings: strategy.maxHoldings,
+      maxSameSector: strategy.maxSameSector,
+      holdingMonths: strategy.holdingMonths,
+      maxSingleAllocation: strategy.maxSingleAllocation,
+      preference: `周期轮动：持有约 ${strategy.holdingMonths} 个月，到期卖出，再从刚结束月份收益率前 ${strategy.topN} 的基金中优先选择 C 类基金，最多持有 ${strategy.maxHoldings} 只，同板块最多 ${strategy.maxSameSector} 只`,
       dataSource: dataSourceLabel(),
       dataNote: "系统优先使用 data/funds.json 中的已更新净值数据；没有本地更新数据时回退到 data/funds.js 内置样本。",
     },
@@ -742,8 +839,44 @@ function simulate(funds, onStep, options = {}) {
     trades,
     decisions,
     annual: annualStats(equity, initialCapital),
+    metrics: performanceMetrics(equity, initialCapital),
     finalValue: cash,
     totalReturn: cash / initialCapital - 1,
+  };
+}
+
+function performanceMetrics(equity, initialCapital) {
+  if (equity.length === 0) {
+    return { cagr: 0, maxDrawdown: 0, winRate: 0, returnDrawdownRatio: 0 };
+  }
+
+  const finalValue = equity[equity.length - 1].value;
+  const startDate = new Date(equity[0].date);
+  const endDate = new Date(equity[equity.length - 1].date);
+  const years = Math.max(1 / 12, (endDate - startDate) / (365.25 * 24 * 60 * 60 * 1000));
+  const cagr = (finalValue / initialCapital) ** (1 / years) - 1;
+
+  let peak = equity[0].value;
+  let maxDrawdownValue = 0;
+  for (const point of equity) {
+    peak = Math.max(peak, point.value);
+    maxDrawdownValue = Math.min(maxDrawdownValue, point.value / peak - 1);
+  }
+
+  const monthlyReturns = [];
+  for (let index = 1; index < equity.length; index += 1) {
+    const previous = equity[index - 1].value;
+    if (previous > 0) monthlyReturns.push(equity[index].value / previous - 1);
+  }
+  const winRate =
+    monthlyReturns.length === 0 ? 0 : monthlyReturns.filter((value) => value > 0).length / monthlyReturns.length;
+  const returnDrawdownRatio = Math.abs(maxDrawdownValue) > 0 ? (finalValue / initialCapital - 1) / Math.abs(maxDrawdownValue) : 0;
+
+  return {
+    cagr,
+    maxDrawdown: maxDrawdownValue,
+    winRate,
+    returnDrawdownRatio,
   };
 }
 
@@ -779,6 +912,15 @@ function renderSummary(result) {
   const hitYears = result.annual.filter((item) => item.hitTarget).length;
   elements.targetStatus.textContent = `${hitYears}/${result.annual.length} 年`;
   elements.targetStatus.className = hitYears === result.annual.length ? "good" : "warn";
+  const metrics = result.metrics ?? performanceMetrics(result.equity, initialCapital);
+  elements.cagrMetric.textContent = percent(metrics.cagr);
+  elements.cagrMetric.className = metrics.cagr >= TARGET_ANNUAL_RETURN ? "good" : metrics.cagr >= 0 ? "warn" : "bad";
+  elements.maxDrawdownMetric.textContent = percent(metrics.maxDrawdown);
+  elements.maxDrawdownMetric.className = Math.abs(metrics.maxDrawdown) <= 0.2 ? "good" : Math.abs(metrics.maxDrawdown) <= 0.35 ? "warn" : "bad";
+  elements.winRateMetric.textContent = percent(metrics.winRate);
+  elements.winRateMetric.className = metrics.winRate >= 0.55 ? "good" : metrics.winRate >= 0.45 ? "warn" : "bad";
+  elements.returnDrawdownMetric.textContent = metrics.returnDrawdownRatio.toFixed(2);
+  elements.returnDrawdownMetric.className = metrics.returnDrawdownRatio >= 2 ? "good" : metrics.returnDrawdownRatio >= 1 ? "warn" : "bad";
   elements.runMeta.textContent = `${result.assumptions.period}，完成于 ${new Date(result.createdAt).toLocaleString("zh-CN")}`;
 }
 
@@ -1119,9 +1261,12 @@ async function updateFundData() {
     }
 
     addLog(
-      `全市场更新完成：目录 ${payload.catalogCount} 只，扫描 ${payload.scannedCount} 只，可回测 ${payload.fundCount} 只，耗时 ${payload.durationSeconds} 秒。`
+      `全市场更新完成：目录 ${payload.catalogCount} 只，扫描 ${payload.scannedCount} 只，缓存命中 ${payload.cachedCount || 0} 只，可回测 ${payload.fundCount} 只，耗时 ${payload.durationSeconds} 秒。`
     );
     addLog(`数据已保存：${payload.path}。`);
+    if (payload.databasePath) {
+      addLog(`SQLite 主缓存：${payload.databasePath}。`);
+    }
     if (payload.excludedMoneyFundCount > 0) {
       addLog(`已排除 ${payload.excludedMoneyFundCount} 只货币/现金/理财类基金。`);
     }
@@ -1158,8 +1303,10 @@ async function runSimulation() {
     const period = getSelectedPeriod();
     const initialCapital = getInitialCapital();
     const allocationMode = getAllocationMode();
+    const strategy = getStrategyOptions();
     addLog(`初始资金：${money(initialCapital)} 元。`);
     addLog(`买入额度分配方式：${ALLOCATION_MODE_LABELS[allocationMode]}。`);
+    addLog(`策略参数：前 ${strategy.topN} 名，最多持有 ${strategy.maxHoldings} 只，同板块最多 ${strategy.maxSameSector} 只，持有 ${strategy.holdingMonths} 个月，单只上限 ${percent(strategy.maxSingleAllocation)}。`);
     elements.etaText.textContent = "预计耗时：约 4 秒";
     elements.runMeta.textContent = `${period.startMonth} 至 ${period.endMonth}，正在模拟`;
     addLog(`模拟区间：${period.startMonth} 至 ${period.endMonth}。`);
@@ -1186,7 +1333,7 @@ async function runSimulation() {
       const elapsed = performance.now() - start;
       const remaining = done > 0 ? Math.max(0, (elapsed / done) * (total - done)) : 0;
       elements.etaText.textContent = `预计剩余：${(remaining / 1000).toFixed(1)} 秒`;
-    }, { ...period, initialCapital, allocationMode });
+    }, { ...period, initialCapital, allocationMode, strategy });
 
     await sleep(500);
     addLog("生成资产曲线、年度收益和完整交易记录。");
@@ -1244,6 +1391,13 @@ function restoreLastResult() {
     }
     if (currentSimulation.assumptions?.allocationMode) {
       elements.allocationMode.value = currentSimulation.assumptions.allocationMode;
+    }
+    if (currentSimulation.assumptions?.topN) elements.topNInput.value = String(currentSimulation.assumptions.topN);
+    if (currentSimulation.assumptions?.maxHoldings) elements.maxHoldingsInput.value = String(currentSimulation.assumptions.maxHoldings);
+    if (currentSimulation.assumptions?.maxSameSector) elements.maxSameSectorInput.value = String(currentSimulation.assumptions.maxSameSector);
+    if (currentSimulation.assumptions?.holdingMonths) elements.holdingMonthsInput.value = String(currentSimulation.assumptions.holdingMonths);
+    if (currentSimulation.assumptions?.maxSingleAllocation) {
+      elements.maxSingleAllocationInput.value = String(Math.round(currentSimulation.assumptions.maxSingleAllocation * 100));
     }
     renderAll(currentSimulation);
     elements.saveBtn.disabled = false;
@@ -1316,6 +1470,7 @@ window.addEventListener("resize", () => {
 async function initialize() {
   getInitialCapital();
   setupPeriodInputs();
+  renderDataQuality();
   await loadSavedFundData();
   restoreLastResult();
 }

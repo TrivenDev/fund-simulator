@@ -5,6 +5,7 @@ import json
 import mimetypes
 import re
 import site
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parent
 SAVE_DIR = ROOT / "saved-simulations"
 DATA_DIR = ROOT / "data"
 FUND_DATA_PATH = DATA_DIR / "funds.json"
+FUND_DB_PATH = DATA_DIR / "funds.db"
 UPDATE_STATUS_PATH = DATA_DIR / "update-status.json"
 WORKER_PATH = ROOT / "fund_data_worker.py"
 
@@ -182,6 +184,254 @@ def month_end(month: str) -> str:
     return f"{month}-{calendar.monthrange(year, month_number)[1]:02d}"
 
 
+def connect_fund_db() -> sqlite3.Connection:
+    DATA_DIR.mkdir(exist_ok=True)
+    conn = sqlite3.connect(FUND_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+def init_fund_db(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS funds (
+          code TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          type TEXT,
+          sector TEXT,
+          risk TEXT,
+          source TEXT,
+          last_status TEXT,
+          last_error TEXT,
+          last_start_date TEXT,
+          last_end_date TEXT,
+          updated_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS fund_nav (
+          code TEXT NOT NULL,
+          date TEXT NOT NULL,
+          nav REAL NOT NULL,
+          PRIMARY KEY (code, date)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_fund_nav_code_date ON fund_nav(code, date);
+
+        CREATE TABLE IF NOT EXISTS update_runs (
+          job_id TEXT PRIMARY KEY,
+          status TEXT,
+          start_date TEXT,
+          end_date TEXT,
+          total INTEGER DEFAULT 0,
+          scanned INTEGER DEFAULT 0,
+          success INTEGER DEFAULT 0,
+          failed INTEGER DEFAULT 0,
+          started_at TEXT,
+          finished_at TEXT,
+          message TEXT
+        );
+        """
+    )
+    conn.commit()
+
+
+def save_update_run(conn: sqlite3.Connection, job_id: str | None, **fields: object) -> None:
+    if not job_id:
+        return
+    row = {
+        "job_id": job_id,
+        "status": fields.get("status"),
+        "start_date": fields.get("start_date"),
+        "end_date": fields.get("end_date"),
+        "total": fields.get("total"),
+        "scanned": fields.get("scanned"),
+        "success": fields.get("success"),
+        "failed": fields.get("failed"),
+        "started_at": fields.get("started_at"),
+        "finished_at": fields.get("finished_at"),
+        "message": fields.get("message"),
+    }
+    conn.execute(
+        """
+        INSERT INTO update_runs (
+          job_id, status, start_date, end_date, total, scanned, success, failed,
+          started_at, finished_at, message
+        )
+        VALUES (
+          :job_id, :status, :start_date, :end_date, :total, :scanned, :success, :failed,
+          :started_at, :finished_at, :message
+        )
+        ON CONFLICT(job_id) DO UPDATE SET
+          status=COALESCE(excluded.status, update_runs.status),
+          start_date=COALESCE(excluded.start_date, update_runs.start_date),
+          end_date=COALESCE(excluded.end_date, update_runs.end_date),
+          total=COALESCE(excluded.total, update_runs.total),
+          scanned=COALESCE(excluded.scanned, update_runs.scanned),
+          success=COALESCE(excluded.success, update_runs.success),
+          failed=COALESCE(excluded.failed, update_runs.failed),
+          started_at=COALESCE(excluded.started_at, update_runs.started_at),
+          finished_at=COALESCE(excluded.finished_at, update_runs.finished_at),
+          message=COALESCE(excluded.message, update_runs.message)
+        """,
+        row,
+    )
+    conn.commit()
+
+
+def upsert_fund_metadata(
+    conn: sqlite3.Connection,
+    fund: dict,
+    status: str,
+    start_date: str,
+    end_date: str,
+    error: str | None = None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO funds (
+          code, name, type, sector, risk, source, last_status, last_error,
+          last_start_date, last_end_date, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(code) DO UPDATE SET
+          name=excluded.name,
+          type=excluded.type,
+          sector=excluded.sector,
+          risk=excluded.risk,
+          source=excluded.source,
+          last_status=excluded.last_status,
+          last_error=excluded.last_error,
+          last_start_date=excluded.last_start_date,
+          last_end_date=excluded.last_end_date,
+          updated_at=excluded.updated_at
+        """,
+        (
+            fund["code"],
+            fund["name"],
+            fund.get("type", ""),
+            fund.get("sector", ""),
+            fund.get("risk", ""),
+            ONLINE_DATA_SOURCE,
+            status,
+            error,
+            start_date,
+            end_date,
+            datetime.now().isoformat(timespec="seconds"),
+        ),
+    )
+
+
+def save_fund_to_db(conn: sqlite3.Connection, fund: dict, nav: list[list[object]], start_date: str, end_date: str) -> None:
+    upsert_fund_metadata(conn, fund, "success", start_date, end_date)
+    conn.executemany(
+        """
+        INSERT INTO fund_nav(code, date, nav)
+        VALUES (?, ?, ?)
+        ON CONFLICT(code, date) DO UPDATE SET nav=excluded.nav
+        """,
+        [(fund["code"], str(date), float(value)) for date, value in nav],
+    )
+    conn.commit()
+
+
+def mark_fund_failed(conn: sqlite3.Connection, fund: dict, start_date: str, end_date: str, error: str) -> None:
+    upsert_fund_metadata(conn, fund, "failed", start_date, end_date, error=error[:1000])
+    conn.commit()
+
+
+def cached_fund_from_db(conn: sqlite3.Connection, fund: dict, start_date: str, end_date: str) -> dict | None:
+    row = conn.execute(
+        "SELECT last_status, last_start_date, last_end_date FROM funds WHERE code = ?",
+        (fund["code"],),
+    ).fetchone()
+    if not row or row["last_status"] != "success":
+        return None
+    if not row["last_start_date"] or not row["last_end_date"]:
+        return None
+    if row["last_start_date"] > start_date or row["last_end_date"] < end_date:
+        return None
+
+    nav_rows = conn.execute(
+        """
+        SELECT date, nav
+        FROM fund_nav
+        WHERE code = ? AND date >= ? AND date <= ?
+        ORDER BY date
+        """,
+        (fund["code"], start_date, end_date),
+    ).fetchall()
+    if len(nav_rows) < 2:
+        return None
+    return {**fund, "nav": [[row["date"], round(float(row["nav"]), 6)] for row in nav_rows]}
+
+
+def load_funds_from_db(start_date: str | None = None, end_date: str | None = None) -> list[dict]:
+    if not FUND_DB_PATH.exists():
+        return []
+    with connect_fund_db() as conn:
+        init_fund_db(conn)
+        fund_rows = conn.execute(
+            """
+            SELECT code, name, type, sector, risk
+            FROM funds
+            WHERE last_status = 'success'
+            ORDER BY CASE WHEN type = 'C' THEN 0 ELSE 1 END, code
+            """
+        ).fetchall()
+        funds = []
+        for fund_row in fund_rows:
+            params: list[object] = [fund_row["code"]]
+            where = "WHERE code = ?"
+            if start_date:
+                where += " AND date >= ?"
+                params.append(start_date)
+            if end_date:
+                where += " AND date <= ?"
+                params.append(end_date)
+            nav_rows = conn.execute(f"SELECT date, nav FROM fund_nav {where} ORDER BY date", params).fetchall()
+            if len(nav_rows) < 2:
+                continue
+            funds.append(
+                {
+                    "code": fund_row["code"],
+                    "name": fund_row["name"],
+                    "type": fund_row["type"] or "未知",
+                    "sector": fund_row["sector"] or "其他",
+                    "risk": fund_row["risk"] or "未知",
+                    "nav": [[row["date"], round(float(row["nav"]), 6)] for row in nav_rows],
+                }
+            )
+        return funds
+
+
+def db_quality_summary() -> dict:
+    if not FUND_DB_PATH.exists():
+        return {"exists": False, "path": str(FUND_DB_PATH)}
+    with connect_fund_db() as conn:
+        init_fund_db(conn)
+        fund_count = conn.execute("SELECT COUNT(*) AS count FROM funds").fetchone()["count"]
+        success_count = conn.execute("SELECT COUNT(*) AS count FROM funds WHERE last_status = 'success'").fetchone()["count"]
+        failed_count = conn.execute("SELECT COUNT(*) AS count FROM funds WHERE last_status = 'failed'").fetchone()["count"]
+        nav_count = conn.execute("SELECT COUNT(*) AS count FROM fund_nav").fetchone()["count"]
+        range_row = conn.execute("SELECT MIN(date) AS start_date, MAX(date) AS end_date FROM fund_nav").fetchone()
+        last_run = conn.execute(
+            "SELECT * FROM update_runs WHERE status = 'complete' ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1"
+        ).fetchone()
+        return {
+            "exists": True,
+            "path": str(FUND_DB_PATH),
+            "fundCount": fund_count,
+            "successCount": success_count,
+            "failedCount": failed_count,
+            "navCount": nav_count,
+            "startDate": range_row["start_date"],
+            "endDate": range_row["end_date"],
+            "lastRun": dict(last_run) if last_run else None,
+        }
+
+
 def months_between(start_date: str, end_date: str) -> list[str]:
     start_year, start_month = [int(part) for part in start_date[:7].split("-")]
     end_year, end_month = [int(part) for part in end_date[:7].split("-")]
@@ -309,6 +559,7 @@ def update_fund_data(
     include_money_funds: bool = False,
     max_funds: int = 0,
     progress_callback=None,
+    job_id: str | None = None,
 ) -> dict:
     if progress_callback:
         progress_callback(
@@ -321,8 +572,25 @@ def update_fund_data(
     if max_funds > 0:
         catalog = catalog[:max_funds]
 
+    conn = connect_fund_db()
+    init_fund_db(conn)
+    save_update_run(
+        conn,
+        job_id,
+        status="running",
+        start_date=start_date,
+        end_date=end_date,
+        total=len(catalog),
+        scanned=0,
+        success=0,
+        failed=0,
+        started_at=datetime.now().isoformat(timespec="seconds"),
+        message="scan started",
+    )
+
     funds = []
     fetch_warnings = []
+    cached_count = 0
     started_at = datetime.now()
     if progress_callback:
         progress_callback(
@@ -337,25 +605,48 @@ def update_fund_data(
             excludedMoneyFundCount=excluded_money,
         )
 
-    def fetch_one(fund: dict) -> dict:
-        nav = fetch_fund_nav(fund["code"], start_date, end_date)
-        return {**fund, "nav": nav}
+    try:
+        for scanned, fund in enumerate(catalog, start=1):
+            try:
+                cached = cached_fund_from_db(conn, fund, start_date, end_date)
+                if cached:
+                    funds.append(cached)
+                    cached_count += 1
+                else:
+                    nav = fetch_fund_nav(fund["code"], start_date, end_date)
+                    save_fund_to_db(conn, fund, nav, start_date, end_date)
+                    funds.append({**fund, "nav": nav})
+            except Exception as exc:
+                error = str(exc)
+                fetch_warnings.append({"code": fund["code"], "name": fund["name"], "error": error})
+                try:
+                    mark_fund_failed(conn, fund, start_date, end_date, error)
+                except Exception:
+                    pass
 
-    for scanned, fund in enumerate(catalog, start=1):
-        try:
-            funds.append(fetch_one(fund))
-        except Exception as exc:
-            fetch_warnings.append({"code": fund["code"], "name": fund["name"], "error": str(exc)})
-        if progress_callback:
-            progress_callback(
-                phase="scan",
-                message=f"正在扫描基金净值：{scanned}/{len(catalog)}，成功 {len(funds)}，失败 {len(fetch_warnings)}",
-                progress=3 + int(87 * scanned / max(1, len(catalog))),
+            save_update_run(
+                conn,
+                job_id,
+                status="running",
                 total=len(catalog),
                 scanned=scanned,
                 success=len(funds),
                 failed=len(fetch_warnings),
+                message=f"scanned {scanned}/{len(catalog)}",
             )
+            if progress_callback:
+                progress_callback(
+                    phase="scan",
+                    message=f"正在扫描基金净值：{scanned}/{len(catalog)}，成功 {len(funds)}，缓存 {cached_count}，失败 {len(fetch_warnings)}",
+                    progress=3 + int(87 * scanned / max(1, len(catalog))),
+                    total=len(catalog),
+                    scanned=scanned,
+                    success=len(funds),
+                    failed=len(fetch_warnings),
+                    cached=cached_count,
+                )
+    finally:
+        conn.close()
 
     requested_months = months_between(start_date, end_date)
     if progress_callback:
@@ -383,6 +674,7 @@ def update_fund_data(
         "requestedMonths": requested_months,
         "catalogCount": catalog_count,
         "scannedCount": len(catalog),
+        "cachedCount": cached_count,
         "fundCount": len(funds),
         "excludedMoneyFundCount": excluded_money,
         "warningCount": len(warnings),
@@ -393,7 +685,7 @@ def update_fund_data(
     if progress_callback:
         progress_callback(
             phase="save",
-            message=f"正在保存 {len(funds)} 只可回测基金到 data/funds.json",
+            message=f"正在导出 {len(funds)} 只可回测基金到 data/funds.json，同时保留 SQLite 主缓存",
             progress=98,
             total=len(catalog),
             scanned=len(catalog),
@@ -402,6 +694,19 @@ def update_fund_data(
         )
     DATA_DIR.mkdir(exist_ok=True)
     FUND_DATA_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    with connect_fund_db() as conn:
+        init_fund_db(conn)
+        save_update_run(
+            conn,
+            job_id,
+            status="complete",
+            total=len(catalog),
+            scanned=len(catalog),
+            success=len(funds),
+            failed=len(warnings),
+            finished_at=datetime.now().isoformat(timespec="seconds"),
+            message="complete",
+        )
     return payload
 
 
@@ -427,12 +732,14 @@ def run_update_job(job_id: str, options: dict) -> None:
             "endDate": result["endDate"],
             "catalogCount": result["catalogCount"],
             "scannedCount": result["scannedCount"],
+            "cachedCount": result.get("cachedCount", 0),
             "fundCount": result["fundCount"],
             "excludedMoneyFundCount": result["excludedMoneyFundCount"],
             "warningCount": result["warningCount"],
             "warnings": result["warnings"][:20],
             "durationSeconds": result["durationSeconds"],
             "path": str(FUND_DATA_PATH),
+            "databasePath": str(FUND_DB_PATH),
         }
         set_update_job(
             jobId=job_id,
@@ -511,6 +818,9 @@ class FundSimulatorHandler(BaseHTTPRequestHandler):
         if endpoint == "/api/fund-data":
             self._send_saved_fund_data()
             return
+        if endpoint == "/api/fund-data/quality":
+            self._send_json({"ok": True, **db_quality_summary()})
+            return
         if endpoint == "/api/update-fund-data/status":
             self._send_json({"ok": True, **get_update_job()})
             return
@@ -558,6 +868,32 @@ class FundSimulatorHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "Not found"}, status=404)
 
     def _send_saved_fund_data(self) -> None:
+        quality = db_quality_summary()
+        last_run = quality.get("lastRun") if quality.get("exists") else None
+        db_start = last_run.get("start_date") if isinstance(last_run, dict) else None
+        db_end = last_run.get("end_date") if isinstance(last_run, dict) else None
+        db_funds = load_funds_from_db(db_start, db_end)
+        if db_funds:
+            months = months_between(db_start, db_end) if db_start and db_end else sorted({row[0][:7] for fund in db_funds for row in fund["nav"]})
+            try:
+                aligned, warnings = align_funds_to_requested_months(db_funds, months)
+            except Exception:
+                aligned, warnings = db_funds, []
+            payload = {
+                "ok": True,
+                "updatedAt": datetime.now().isoformat(timespec="seconds"),
+                "source": f"{ONLINE_DATA_SOURCE}（SQLite 本地缓存）",
+                "indicator": AKSHARE_INDICATOR,
+                "fundCount": len(aligned),
+                "warningCount": len(warnings),
+                "warnings": warnings[:500],
+                "storage": "sqlite",
+                "path": str(FUND_DB_PATH),
+                "funds": aligned,
+            }
+            self._send_json(payload)
+            return
+
         if not FUND_DATA_PATH.exists():
             self._send_json(
                 {

@@ -32,6 +32,7 @@ def main() -> int:
             include_money_funds=args.include_money_funds,
             max_funds=args.max_funds,
             progress_callback=progress,
+            job_id=args.job_id,
         )
         summary = {
             "ok": True,
@@ -42,12 +43,14 @@ def main() -> int:
             "endDate": result["endDate"],
             "catalogCount": result["catalogCount"],
             "scannedCount": result["scannedCount"],
+            "cachedCount": result.get("cachedCount", 0),
             "fundCount": result["fundCount"],
             "excludedMoneyFundCount": result["excludedMoneyFundCount"],
             "warningCount": result["warningCount"],
             "warnings": result["warnings"][:20],
             "durationSeconds": result["durationSeconds"],
             "path": str(server.FUND_DATA_PATH),
+            "databasePath": str(server.FUND_DB_PATH),
         }
         server.set_update_job(
             jobId=args.job_id,
