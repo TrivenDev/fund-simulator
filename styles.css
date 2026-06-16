@@ -11,6 +11,41 @@
   --red: #bf3b3b;
   --amber: #a46412;
   --shadow: 0 14px 34px rgba(26, 43, 58, 0.08);
+  --soft-shadow: 0 8px 22px rgba(26, 43, 58, 0.05);
+  --chart-bg: linear-gradient(180deg, #fff 0%, #f9fbfc 100%);
+  --chart-grid: #d9e0e7;
+  --chart-grid-soft: #edf1f5;
+  --modal-backdrop: rgba(20, 31, 42, 0.48);
+  --tooltip-bg: rgba(255, 255, 255, 0.96);
+  --positive-bg: rgba(191, 59, 59, 0.06);
+  --positive-border: rgba(191, 59, 59, 0.28);
+  --negative-bg: rgba(19, 121, 91, 0.06);
+  --negative-border: rgba(19, 121, 91, 0.28);
+}
+
+[data-theme="dark"] {
+  --bg: #101820;
+  --surface: #18232d;
+  --surface-subtle: #22313d;
+  --text: #eef4f8;
+  --muted: #9baab7;
+  --border: #31424f;
+  --accent: #4fa3bf;
+  --accent-strong: #72bfd6;
+  --green: #49c08f;
+  --red: #ff7474;
+  --amber: #f0b45c;
+  --shadow: 0 16px 36px rgba(0, 0, 0, 0.24);
+  --soft-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
+  --chart-bg: linear-gradient(180deg, #17222c 0%, #121b24 100%);
+  --chart-grid: #344756;
+  --chart-grid-soft: #263744;
+  --modal-backdrop: rgba(2, 8, 14, 0.66);
+  --tooltip-bg: rgba(24, 35, 45, 0.96);
+  --positive-bg: rgba(255, 116, 116, 0.1);
+  --positive-border: rgba(255, 116, 116, 0.34);
+  --negative-bg: rgba(73, 192, 143, 0.1);
+  --negative-border: rgba(73, 192, 143, 0.34);
 }
 
 * {
@@ -41,6 +76,7 @@ body {
 .workspace,
 .quality-panel,
 .year-panel,
+.decision-panel,
 .table-panel {
   margin-bottom: 18px;
 }
@@ -66,7 +102,7 @@ body {
   border-radius: 6px;
   overflow: hidden;
   background: var(--surface);
-  box-shadow: 0 8px 22px rgba(26, 43, 58, 0.05);
+  box-shadow: var(--soft-shadow);
 }
 
 .ticker-label,
@@ -249,6 +285,74 @@ h2 {
   min-width: 148px;
 }
 
+.actions .theme-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  width: 78px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  background: transparent;
+}
+
+.theme-switch-track {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  width: 70px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  box-shadow: inset 0 1px 4px rgba(26, 43, 58, 0.12);
+  transition: background 180ms ease, border-color 180ms ease;
+}
+
+.theme-switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 3px 10px rgba(26, 43, 58, 0.22);
+  transition: transform 180ms ease, background 180ms ease;
+}
+
+.theme-switch-icon {
+  position: relative;
+  z-index: 1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  transition: color 180ms ease;
+}
+
+.theme-switch[aria-pressed="false"] .theme-switch-icon-light,
+.theme-switch[aria-pressed="true"] .theme-switch-icon-dark {
+  color: var(--accent);
+}
+
+.theme-switch[aria-pressed="true"] .theme-switch-thumb {
+  transform: translateX(36px);
+}
+
+.theme-switch:hover:not(:disabled),
+.theme-switch:focus-visible {
+  border-color: transparent;
+}
+
+.theme-switch:focus-visible .theme-switch-track {
+  outline: 2px solid rgba(79, 163, 191, 0.35);
+  outline-offset: 2px;
+}
+
 .period-controls input:focus,
 .period-controls select:focus,
 .month-trigger:focus,
@@ -362,6 +466,7 @@ button:disabled {
 .strategy-panel,
 .quality-panel,
 .year-panel,
+.decision-panel,
 .table-panel {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -380,7 +485,7 @@ button:disabled {
 
 .strategy-controls {
   display: grid;
-  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 12px;
 }
 
@@ -399,6 +504,15 @@ button:disabled {
   background: var(--surface);
   color: var(--text);
   font: inherit;
+}
+
+.checkbox-control {
+  align-content: end;
+}
+
+.checkbox-control input {
+  width: 20px;
+  height: 20px;
 }
 
 .strategy-controls input:focus {
@@ -427,6 +541,7 @@ button:disabled {
 .activity-panel,
 .chart-panel,
 .year-panel,
+.decision-panel,
 .table-panel {
   padding: 18px;
 }
@@ -514,7 +629,7 @@ button:disabled {
   height: 340px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: linear-gradient(180deg, #fff 0%, #f9fbfc 100%);
+  background: var(--chart-bg);
 }
 
 .year-cards {
@@ -529,12 +644,50 @@ button:disabled {
   gap: 10px;
 }
 
+.decision-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.decision-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  background: var(--surface-subtle);
+}
+
+.decision-card.enter {
+  border-color: var(--positive-border);
+}
+
+.decision-card.wait {
+  border-color: var(--negative-border);
+}
+
+.decision-card span,
+.decision-card small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.decision-card strong {
+  display: block;
+  margin: 4px 0;
+  font-size: 17px;
+}
+
 .year-card,
 .quality-card {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 14px;
-  background: #fbfcfd;
+  background: var(--surface-subtle);
 }
 
 .quality-card span {
@@ -601,8 +754,8 @@ button:disabled {
 }
 
 .month-return-cell.up {
-  border-color: rgba(191, 59, 59, 0.28);
-  background: rgba(191, 59, 59, 0.06);
+  border-color: var(--positive-border);
+  background: var(--positive-bg);
 }
 
 .month-return-cell.up strong {
@@ -610,8 +763,8 @@ button:disabled {
 }
 
 .month-return-cell.down {
-  border-color: rgba(19, 121, 91, 0.28);
-  background: rgba(19, 121, 91, 0.06);
+  border-color: var(--negative-border);
+  background: var(--negative-bg);
 }
 
 .month-return-cell.down strong {
@@ -667,8 +820,8 @@ th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #eef3f8;
-  color: #344252;
+  background: var(--surface-subtle);
+  color: var(--text);
   font-size: 13px;
 }
 
@@ -686,7 +839,7 @@ td:nth-child(10) {
 }
 
 tbody tr:hover {
-  background: #f5f8fb;
+  background: var(--surface-subtle);
 }
 
 .fund-link {
@@ -706,6 +859,20 @@ tbody tr:hover {
   color: var(--accent-strong);
 }
 
+.decision-link {
+  min-height: 28px;
+  margin-left: 10px;
+  padding: 0 10px;
+  border-color: var(--accent);
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.decision-link:hover:not(:disabled) {
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
+}
+
 .modal-open {
   overflow: hidden;
 }
@@ -717,14 +884,15 @@ tbody tr:hover {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(20, 31, 42, 0.48);
+  background: var(--modal-backdrop);
 }
 
 .modal-backdrop[hidden] {
   display: none;
 }
 
-.fund-modal {
+.fund-modal,
+.decision-modal {
   width: min(920px, 100%);
   max-height: min(760px, calc(100vh - 48px));
   overflow: auto;
@@ -732,6 +900,10 @@ tbody tr:hover {
   padding: 18px;
   background: var(--surface);
   box-shadow: 0 24px 70px rgba(11, 20, 30, 0.28);
+}
+
+.decision-modal {
+  width: min(1180px, 100%);
 }
 
 .modal-heading {
@@ -771,7 +943,7 @@ tbody tr:hover {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 10px;
-  background: #fbfcfd;
+  background: var(--surface-subtle);
 }
 
 .fund-stats span {
@@ -795,7 +967,7 @@ tbody tr:hover {
   height: 380px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: linear-gradient(180deg, #fff 0%, #f9fbfc 100%);
+  background: var(--chart-bg);
   cursor: crosshair;
 }
 
@@ -806,7 +978,7 @@ tbody tr:hover {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--tooltip-bg);
   box-shadow: 0 12px 28px rgba(26, 43, 58, 0.16);
   color: var(--text);
   font-size: 12px;
@@ -817,6 +989,40 @@ tbody tr:hover {
 .fund-chart-tooltip span {
   display: block;
   line-height: 1.5;
+}
+
+.decision-body {
+  display: grid;
+  gap: 16px;
+}
+
+.decision-section {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  overflow: auto;
+  background: var(--surface-subtle);
+}
+
+.decision-section h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.decision-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.decision-section .decision-table {
+  min-width: 760px;
+  font-size: 13px;
+}
+
+.decision-section .decision-table th,
+.decision-section .decision-table td {
+  padding: 8px 10px;
 }
 
 @media (max-width: 980px) {
@@ -881,6 +1087,7 @@ tbody tr:hover {
   .workspace,
   .year-cards,
   .quality-cards,
+  .decision-cards,
   .strategy-controls,
   .fund-stats {
     grid-template-columns: 1fr;

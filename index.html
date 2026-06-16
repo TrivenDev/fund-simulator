@@ -6,7 +6,7 @@
     <title>模拟基金交易系统</title>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="theme-color" content="#176b87" />
-    <link rel="stylesheet" href="./styles.css?v=20260616-max2000-strict-start" />
+    <link rel="stylesheet" href="./styles.css?v=20260616-entry-filter" />
   </head>
   <body>
     <main class="app-shell">
@@ -59,6 +59,14 @@
           <button id="startBtn" class="primary" type="button">开始模拟交易</button>
           <button id="updateDataBtn" type="button">更新全市场净值</button>
           <button id="saveBtn" type="button" disabled>保存这次模拟</button>
+          <button id="exportReportBtn" type="button" disabled>导出报告</button>
+          <button id="themeToggleBtn" class="theme-switch" type="button" aria-label="切换夜间模式" aria-pressed="false">
+            <span class="theme-switch-track">
+              <span class="theme-switch-icon theme-switch-icon-light" aria-hidden="true">日</span>
+              <span class="theme-switch-icon theme-switch-icon-dark" aria-hidden="true">夜</span>
+              <span class="theme-switch-thumb" aria-hidden="true"></span>
+            </span>
+          </button>
         </div>
       </section>
 
@@ -95,6 +103,18 @@
           <label>
             <span>单只仓位上限</span>
             <input id="maxSingleAllocationInput" type="number" min="10" max="100" step="5" value="60" />
+          </label>
+          <label class="checkbox-control">
+            <span>入场过滤</span>
+            <input id="entryFilterInput" type="checkbox" checked />
+          </label>
+          <label>
+            <span>最低入场收益(%)</span>
+            <input id="minEntryReturnInput" type="number" min="-20" max="20" step="0.5" value="0" />
+          </label>
+          <label>
+            <span>正收益占比(%)</span>
+            <input id="minPositiveBreadthInput" type="number" min="0" max="100" step="5" value="35" />
           </label>
         </div>
       </section>
@@ -177,6 +197,14 @@
         <div id="yearCards" class="year-cards"></div>
       </section>
 
+      <section class="decision-panel" aria-label="择时决策记录">
+        <div class="panel-heading">
+          <h2>择时决策</h2>
+          <span id="decisionCount">0 条</span>
+        </div>
+        <div id="decisionCards" class="decision-cards"></div>
+      </section>
+
       <section class="table-panel" aria-label="交易记录">
         <div class="panel-heading">
           <h2>交易记录</h2>
@@ -203,6 +231,19 @@
         </div>
       </section>
 
+      <div id="decisionModal" class="modal-backdrop" hidden>
+        <section class="decision-modal" role="dialog" aria-modal="true" aria-labelledby="decisionModalTitle">
+          <div class="modal-heading">
+            <div>
+              <h2 id="decisionModalTitle">买入决策解释</h2>
+              <p id="decisionModalMeta"></p>
+            </div>
+            <button id="decisionModalClose" class="icon-button" type="button" aria-label="关闭">×</button>
+          </div>
+          <div id="decisionModalBody" class="decision-body"></div>
+        </section>
+      </div>
+
       <div id="fundModal" class="modal-backdrop" hidden>
         <section class="fund-modal" role="dialog" aria-modal="true" aria-labelledby="fundModalTitle">
           <div class="modal-heading">
@@ -222,6 +263,6 @@
     </main>
 
     <script src="./data/funds.js"></script>
-    <script src="./app.js?v=20260616-max2000-strict-start"></script>
+    <script src="./app.js?v=20260616-entry-filter"></script>
   </body>
 </html>

@@ -13,14 +13,25 @@ const ALLOCATION_MODE_LABELS = {
 const PERIOD_MIN_MONTH = "1998-01";
 const PERIOD_MAX_MONTH = "2026-12";
 const MAX_UPDATE_FUNDS = 2000;
+const THEME_STORAGE_KEY = "fund-simulator:theme";
 const FALLBACK_DATA_SOURCE = "本地内置候选池 data/funds.js（window.FUND_UNIVERSE，月度净值样本，可替换为真实基金净值数据）";
 
 const $ = (selector) => document.querySelector(selector);
+
+function initialTheme() {
+  const saved = localStorage.getItem(THEME_STORAGE_KEY);
+  if (saved === "dark" || saved === "light") return saved;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+document.documentElement.dataset.theme = initialTheme();
 
 const elements = {
   startBtn: $("#startBtn"),
   updateDataBtn: $("#updateDataBtn"),
   saveBtn: $("#saveBtn"),
+  exportReportBtn: $("#exportReportBtn"),
+  themeToggleBtn: $("#themeToggleBtn"),
   startMonth: $("#startMonth"),
   endMonth: $("#endMonth"),
   startMonthButton: $("#startMonthButton"),
@@ -39,6 +50,9 @@ const elements = {
   maxSameSectorInput: $("#maxSameSectorInput"),
   holdingMonthsInput: $("#holdingMonthsInput"),
   maxSingleAllocationInput: $("#maxSingleAllocationInput"),
+  entryFilterInput: $("#entryFilterInput"),
+  minEntryReturnInput: $("#minEntryReturnInput"),
+  minPositiveBreadthInput: $("#minPositiveBreadthInput"),
   initialCapital: $("#initialCapital"),
   finalValue: $("#finalValue"),
   totalReturn: $("#totalReturn"),
@@ -55,6 +69,8 @@ const elements = {
   runMeta: $("#runMeta"),
   equityChart: $("#equityChart"),
   yearCards: $("#yearCards"),
+  decisionCards: $("#decisionCards"),
+  decisionCount: $("#decisionCount"),
   tradeTable: $("#tradeTable"),
   tradeCount: $("#tradeCount"),
   fundModal: $("#fundModal"),
@@ -64,6 +80,11 @@ const elements = {
   fundModalClose: $("#fundModalClose"),
   fundNavChart: $("#fundNavChart"),
   fundChartTooltip: $("#fundChartTooltip"),
+  decisionModal: $("#decisionModal"),
+  decisionModalTitle: $("#decisionModalTitle"),
+  decisionModalMeta: $("#decisionModalMeta"),
+  decisionModalBody: $("#decisionModalBody"),
+  decisionModalClose: $("#decisionModalClose"),
   marketTickerTrack: $("#marketTickerTrack"),
   marketTickerMeta: $("#marketTickerMeta"),
   annualModeButtons: document.querySelectorAll("[data-annual-mode]"),
@@ -81,6 +102,28 @@ let monthBounds = { min: "2022-01", max: PERIOD_MAX_MONTH };
 let openMonthPicker = null;
 let activeFundChart = null;
 let annualValueMode = "percent";
+
+function cssColor(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function applyTheme(theme) {
+  const nextTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = nextTheme;
+  localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  elements.themeToggleBtn.setAttribute("aria-label", nextTheme === "dark" ? "切换白天模式" : "切换夜间模式");
+  elements.themeToggleBtn.setAttribute("aria-pressed", String(nextTheme === "dark"));
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", cssColor("--accent"));
+
+  if (currentSimulation) drawChart(currentSimulation);
+  if (activeFundChart) {
+    renderFundNavChart(activeFundChart.fund, activeFundChart.stats);
+  }
+}
+
+function toggleTheme() {
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+}
 
 function money(value) {
   return Number(value).toLocaleString("zh-CN", {
@@ -428,6 +471,13 @@ function readBoundedInteger(input, fallback, min, max) {
   return value;
 }
 
+function readBoundedPercentInput(input, fallback, min, max) {
+  const raw = Number.parseFloat(input.value);
+  const value = Number.isFinite(raw) ? Math.max(min, Math.min(max, raw)) : fallback;
+  input.value = String(value);
+  return value / 100;
+}
+
 function getStrategyOptions() {
   const maxHoldings = readBoundedInteger(elements.maxHoldingsInput, MAX_HOLDINGS, 1, 10);
   const maxSameSector = readBoundedInteger(elements.maxSameSectorInput, MAX_SAME_SECTOR, 1, maxHoldings);
@@ -437,6 +487,9 @@ function getStrategyOptions() {
     maxSameSector,
     holdingMonths: readBoundedInteger(elements.holdingMonthsInput, 1, 1, 12),
     maxSingleAllocation: readBoundedInteger(elements.maxSingleAllocationInput, Math.round(MAX_SINGLE_ALLOCATION * 100), 10, 100) / 100,
+    entryFilterEnabled: elements.entryFilterInput.checked,
+    minEntryReturn: readBoundedPercentInput(elements.minEntryReturnInput, 0, -20, 20),
+    minPositiveBreadth: readBoundedPercentInput(elements.minPositiveBreadthInput, 35, 0, 100),
   };
 }
 
@@ -460,30 +513,35 @@ function capAllocations(items, maxSingleAllocation = MAX_SINGLE_ALLOCATION) {
   return allocations.map((item) => ({ ...item, allocation: total > 0 ? item.allocation / total : 0 }));
 }
 
-function allocationScore(item, index, allocationMode, sectorSeen, strategy) {
-  if (allocationMode === "equal") return 1;
+function allocationScoreBreakdown(item, index, allocationMode, sectorSeen, strategy) {
+  const sameSectorCount = sectorSeen.get(item.fund.sector) ?? 0;
+  const baseScore = allocationMode === "equal" ? 1 : Math.max(1, strategy.topN - item.rank + 1);
+  const drawdown = allocationMode === "riskAdjusted" ? Math.abs(maxDrawdown(item.fund, index, 6)) : 0;
+  const vol = allocationMode === "riskAdjusted" ? volatility(item.fund, index, 6) : 0;
+  const drawdownFactor = allocationMode === "riskAdjusted" ? 1 / (1 + drawdown * 4) : 1;
+  const volatilityFactor = allocationMode === "riskAdjusted" ? 1 / (1 + vol * 8) : 1;
+  const sectorFactor = allocationMode === "riskAdjusted" && sameSectorCount > 0 ? 0.82 : 1;
+  const allocationScore = Math.max(0.01, baseScore * drawdownFactor * volatilityFactor * sectorFactor);
 
-  let score = Math.max(1, strategy.topN - item.rank + 1);
-  if (allocationMode === "riskAdjusted") {
-    const drawdown = Math.abs(maxDrawdown(item.fund, index, 6));
-    const vol = volatility(item.fund, index, 6);
-    const drawdownFactor = 1 / (1 + drawdown * 4);
-    const volatilityFactor = 1 / (1 + vol * 8);
-    const sameSectorCount = sectorSeen.get(item.fund.sector) ?? 0;
-    const sectorFactor = sameSectorCount > 0 ? 0.82 : 1;
-    score *= drawdownFactor * volatilityFactor * sectorFactor;
-  }
-  sectorSeen.set(item.fund.sector, (sectorSeen.get(item.fund.sector) ?? 0) + 1);
-  return Math.max(0.01, score);
+  sectorSeen.set(item.fund.sector, sameSectorCount + 1);
+  return {
+    baseScore,
+    allocationScore,
+    drawdown,
+    volatility: vol,
+    drawdownFactor,
+    volatilityFactor,
+    sectorFactor,
+  };
 }
 
 function applyAllocationWeights(selectedItems, index, allocationMode, strategy = getStrategyOptions()) {
   if (selectedItems.length === 0) return [];
   const sectorSeen = new Map();
-  const scored = selectedItems.map((item) => ({
-    ...item,
-    allocationScore: allocationScore(item, index, allocationMode, sectorSeen, strategy),
-  }));
+  const scored = selectedItems.map((item) => {
+    const breakdown = allocationScoreBreakdown(item, index, allocationMode, sectorSeen, strategy);
+    return { ...item, ...breakdown };
+  });
   const totalScore = scored.reduce((sum, item) => sum + item.allocationScore, 0);
   if (totalScore <= 0) {
     return scored.map((item) => ({ ...item, allocation: 1 / scored.length }));
@@ -614,6 +672,45 @@ function monthlyReturnRank(funds, index) {
     .map((item, index) => ({ ...item, rank: index + 1 }));
 }
 
+function evaluateMarketTiming(ranked, topCandidates, strategy) {
+  const returns = ranked.map((item) => item.monthlyReturn).filter(Number.isFinite);
+  const bestReturn = topCandidates[0]?.monthlyReturn ?? null;
+  const topAverage =
+    topCandidates.length > 0
+      ? topCandidates.reduce((sum, item) => sum + item.monthlyReturn, 0) / topCandidates.length
+      : null;
+  const positiveBreadth =
+    returns.length > 0 ? returns.filter((value) => value > 0).length / returns.length : 0;
+
+  const reasons = [];
+  if (!strategy.entryFilterEnabled) {
+    return {
+      shouldEnter: true,
+      bestReturn,
+      topAverage,
+      positiveBreadth,
+      reasons: ["入场过滤已关闭，卖出后按排名继续买入。"],
+    };
+  }
+  if (bestReturn === null || bestReturn < strategy.minEntryReturn) {
+    reasons.push(`榜首基金当月收益 ${bestReturn === null ? "-" : percent(bestReturn)}，低于最低入场收益 ${percent(strategy.minEntryReturn)}`);
+  }
+  if (topAverage === null || topAverage < strategy.minEntryReturn) {
+    reasons.push(`前 ${strategy.topN} 平均收益 ${topAverage === null ? "-" : percent(topAverage)}，低于最低入场收益 ${percent(strategy.minEntryReturn)}`);
+  }
+  if (positiveBreadth < strategy.minPositiveBreadth) {
+    reasons.push(`全市场正收益占比 ${percent(positiveBreadth)}，低于阈值 ${percent(strategy.minPositiveBreadth)}`);
+  }
+
+  return {
+    shouldEnter: reasons.length === 0,
+    bestReturn,
+    topAverage,
+    positiveBreadth,
+    reasons: reasons.length ? reasons : ["市场强度满足入场条件。"],
+  };
+}
+
 function chooseMonthlyRotationFunds(funds, index, strategy) {
   const sectorCount = new Map();
   const selected = [];
@@ -635,6 +732,75 @@ function chooseMonthlyRotationFunds(funds, index, strategy) {
   return selected;
 }
 
+function fundDecisionSnapshot(item) {
+  return {
+    code: item.fund.code,
+    name: item.fund.name,
+    sector: item.fund.sector,
+    type: item.fund.type || "未知",
+    rank: item.rank,
+    monthlyReturn: item.monthlyReturn,
+  };
+}
+
+function analyzeMonthlyRotationDecision(funds, index, strategy, allocationMode) {
+  const ranked = monthlyReturnRank(funds, index);
+  const topCandidates = ranked.slice(0, strategy.topN);
+  const timing = evaluateMarketTiming(ranked, topCandidates, strategy);
+  const preferred = [...topCandidates].sort((a, b) => {
+    if (a.fund.type === "C" && b.fund.type !== "C") return -1;
+    if (a.fund.type !== "C" && b.fund.type === "C") return 1;
+    return a.rank - b.rank;
+  });
+
+  const sectorCount = new Map();
+  const selected = [];
+  const excludedBySector = [];
+  const excludedByCapacity = [];
+  for (const item of preferred) {
+    const sectorHoldings = sectorCount.get(item.fund.sector) ?? 0;
+    if (selected.length >= strategy.maxHoldings) {
+      excludedByCapacity.push({
+        ...fundDecisionSnapshot(item),
+        reason: `最多持有 ${strategy.maxHoldings} 只，本月名额已满`,
+      });
+      continue;
+    }
+    if (sectorHoldings >= strategy.maxSameSector) {
+      excludedBySector.push({
+        ...fundDecisionSnapshot(item),
+        reason: `${item.fund.sector} 板块已达到 ${strategy.maxSameSector} 只上限`,
+      });
+      continue;
+    }
+    selected.push(item);
+    sectorCount.set(item.fund.sector, sectorHoldings + 1);
+  }
+
+  const allocated = timing.shouldEnter ? applyAllocationWeights(selected, index, allocationMode, strategy) : [];
+  return {
+    timing,
+    topCandidates: topCandidates.map(fundDecisionSnapshot),
+    selectedItems: allocated,
+    selected: allocated.map((item) => ({
+      ...fundDecisionSnapshot(item),
+      allocation: item.allocation,
+      baseScore: item.baseScore,
+      allocationScore: item.allocationScore,
+      drawdown: item.drawdown,
+      volatility: item.volatility,
+      drawdownFactor: item.drawdownFactor,
+      volatilityFactor: item.volatilityFactor,
+      sectorFactor: item.sectorFactor,
+      riskLowered:
+        allocationMode === "riskAdjusted" &&
+        (item.drawdownFactor < 0.999 || item.volatilityFactor < 0.999 || item.sectorFactor < 0.999),
+    })),
+    excludedBySector,
+    excludedByCapacity,
+  };
+}
+
 function portfolioValue(cash, holdings, index) {
   return (
     cash +
@@ -644,7 +810,7 @@ function portfolioValue(cash, holdings, index) {
   );
 }
 
-function createTrade({ date, action, fund, buyAmount = 0, sellAmount = 0, balance = 0, shares = 0, note = "" }) {
+function createTrade({ date, action, fund, buyAmount = 0, sellAmount = 0, balance = 0, shares = 0, note = "", decisionId = "" }) {
   return {
     date,
     action,
@@ -656,6 +822,7 @@ function createTrade({ date, action, fund, buyAmount = 0, sellAmount = 0, balanc
     balance,
     shares,
     note,
+    decisionId,
   };
 }
 
@@ -763,7 +930,7 @@ function liquidateAll({ date, index, cash, holdings, trades, action, note }) {
   return { cash, holdings: [] };
 }
 
-function buyRotationPortfolio({ date, index, cash, selectedItems, trades, allocationMode, strategy }) {
+function buyRotationPortfolio({ date, index, cash, selectedItems, trades, allocationMode, strategy, decisionId = "" }) {
   const holdings = [];
   if (selectedItems.length === 0 || cash <= 0) {
     return { cash, holdings };
@@ -794,6 +961,7 @@ function buyRotationPortfolio({ date, index, cash, selectedItems, trades, alloca
         buyAmount,
         balance: cash + portfolioValue(0, holdings, index),
         shares,
+        decisionId,
         note: `本月收益排名第 ${item.rank}/${strategy.topN}，本月收益 ${percent(item.monthlyReturn)}，${ALLOCATION_MODE_LABELS[allocationMode]}，买入权重 ${percent(item.allocation)}，计划持有约 ${strategy.holdingMonths} 个月`,
       })
     );
@@ -837,24 +1005,42 @@ function simulate(funds, onStep, options = {}) {
     }
 
     if (holdings.length === 0 && index > 0 && index < endIndex) {
-      const selectedItems = chooseMonthlyRotationFunds(funds, index, strategy);
+      const decisionId = `decision-${date}`;
+      const decisionAnalysis = analyzeMonthlyRotationDecision(funds, index, strategy, allocationMode);
       const beforeValue = portfolioValue(cash, holdings, index);
       ({ cash, holdings } = buyRotationPortfolio({
         date,
         index,
         cash,
-        selectedItems,
+        selectedItems: decisionAnalysis.selectedItems,
         trades,
         allocationMode,
         strategy,
+        decisionId,
       }));
       decisions.push({
+        id: decisionId,
         date,
-        action: "monthly-top10-rotation",
+        action: decisionAnalysis.timing.shouldEnter ? "monthly-top10-rotation" : "wait-market",
         beforeValue,
-        funds: applyAllocationWeights(selectedItems, index, allocationMode, strategy).map(
-          (item) => `${item.fund.name}(${item.fund.sector}) 第${item.rank}名 ${percent(item.monthlyReturn)} 权重${percent(item.allocation)}`
-        ),
+        allocationMode,
+        allocationModeLabel: ALLOCATION_MODE_LABELS[allocationMode],
+        topN: strategy.topN,
+        maxHoldings: strategy.maxHoldings,
+        maxSameSector: strategy.maxSameSector,
+        entryFilterEnabled: strategy.entryFilterEnabled,
+        minEntryReturn: strategy.minEntryReturn,
+        minPositiveBreadth: strategy.minPositiveBreadth,
+        timing: decisionAnalysis.timing,
+        topCandidates: decisionAnalysis.topCandidates,
+        selected: decisionAnalysis.selected,
+        excludedBySector: decisionAnalysis.excludedBySector,
+        excludedByCapacity: decisionAnalysis.excludedByCapacity,
+        funds: decisionAnalysis.timing.shouldEnter
+          ? decisionAnalysis.selected.map(
+              (item) => `${item.name}(${item.sector}) 第${item.rank}名 ${percent(item.monthlyReturn)} 权重${percent(item.allocation)}`
+            )
+          : decisionAnalysis.timing.reasons,
       });
     } else if (index === 0) {
       decisions.push({
@@ -914,7 +1100,10 @@ function simulate(funds, onStep, options = {}) {
       maxSameSector: strategy.maxSameSector,
       holdingMonths: strategy.holdingMonths,
       maxSingleAllocation: strategy.maxSingleAllocation,
-      preference: `周期轮动：持有约 ${strategy.holdingMonths} 个月，到期卖出，再从刚结束月份收益率前 ${strategy.topN} 的基金中优先选择 C 类基金，最多持有 ${strategy.maxHoldings} 只，同板块最多 ${strategy.maxSameSector} 只`,
+      entryFilterEnabled: strategy.entryFilterEnabled,
+      minEntryReturn: strategy.minEntryReturn,
+      minPositiveBreadth: strategy.minPositiveBreadth,
+      preference: `周期轮动：持有约 ${strategy.holdingMonths} 个月，到期卖出，再从刚结束月份收益率前 ${strategy.topN} 的基金中优先选择 C 类基金，最多持有 ${strategy.maxHoldings} 只，同板块最多 ${strategy.maxSameSector} 只；${strategy.entryFilterEnabled ? `入场过滤要求榜首和前 ${strategy.topN} 平均收益不低于 ${percent(strategy.minEntryReturn)}，全市场正收益占比不低于 ${percent(strategy.minPositiveBreadth)}` : "入场过滤关闭"}`,
       dataSource: dataSourceLabel(),
       dataNote: "系统优先使用 data/funds.json 中的已更新净值数据；没有本地更新数据时回退到 data/funds.js 内置样本。",
     },
@@ -1065,6 +1254,38 @@ function renderYears(result) {
   }
 }
 
+function renderDecisions(result) {
+  elements.decisionCards.innerHTML = "";
+  const actionable = (result.decisions || []).filter((decision) => decision.id);
+  elements.decisionCount.textContent = `${actionable.length} 条`;
+  if (actionable.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "decision-empty";
+    empty.textContent = "暂无择时决策记录。";
+    elements.decisionCards.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const decision of actionable) {
+    const card = document.createElement("article");
+    const isWait = decision.action === "wait-market";
+    card.className = `decision-card ${isWait ? "wait" : "enter"}`;
+    const bestReturn = decision.timing?.bestReturn;
+    const breadth = decision.timing?.positiveBreadth;
+    card.innerHTML = `
+      <div>
+        <span>${decision.date}</span>
+        <strong>${isWait ? "空仓等待" : `买入 ${decision.selected?.length || 0} 只`}</strong>
+        <small>榜首 ${bestReturn === null || bestReturn === undefined ? "-" : percent(bestReturn)} · 正收益占比 ${breadth === null || breadth === undefined ? "-" : percent(breadth)}</small>
+      </div>
+      <button class="decision-link" type="button" data-decision-id="${decision.id}">查看决策</button>
+    `;
+    fragment.appendChild(card);
+  }
+  elements.decisionCards.appendChild(fragment);
+}
+
 function renderTrades(result) {
   elements.tradeTable.innerHTML = "";
   const fragment = document.createDocumentFragment();
@@ -1093,6 +1314,15 @@ function renderTrades(result) {
         button.textContent = trade.fundName;
         button.addEventListener("click", () => openFundModal(trade.code));
         cell.appendChild(button);
+      } else if (index === 9 && trade.decisionId) {
+        const text = document.createElement("span");
+        text.textContent = value;
+        const button = document.createElement("button");
+        button.className = "decision-link";
+        button.type = "button";
+        button.dataset.decisionId = trade.decisionId;
+        button.textContent = "查看决策";
+        cell.append(text, button);
       } else {
         cell.textContent = value;
       }
@@ -1102,6 +1332,117 @@ function renderTrades(result) {
   }
   elements.tradeTable.appendChild(fragment);
   elements.tradeCount.textContent = `${result.trades.length} 条`;
+}
+
+function findDecisionById(id) {
+  return currentSimulation?.decisions?.find((decision) => decision.id === id) || null;
+}
+
+function renderDecisionTable(title, rows, columns, emptyText) {
+  const section = document.createElement("section");
+  section.className = "decision-section";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  section.appendChild(heading);
+
+  if (!rows || rows.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "decision-empty";
+    empty.textContent = emptyText;
+    section.appendChild(empty);
+    return section;
+  }
+
+  const table = document.createElement("table");
+  table.className = "decision-table";
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const column of columns) {
+    const th = document.createElement("th");
+    th.textContent = column.label;
+    headRow.appendChild(th);
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    for (const column of columns) {
+      const td = document.createElement("td");
+      td.textContent = column.render(row);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  section.appendChild(table);
+  return section;
+}
+
+function allocationFormulaText(item) {
+  const base = item.baseScore?.toFixed(2) ?? "-";
+  if (currentSimulation?.assumptions?.allocationMode !== "riskAdjusted") {
+    return `${base} / 入选基金得分合计，归一化后应用单只上限`;
+  }
+  return `${base} × 回撤${item.drawdownFactor.toFixed(2)} × 波动${item.volatilityFactor.toFixed(2)} × 板块${item.sectorFactor.toFixed(2)} = ${item.allocationScore.toFixed(2)}，再归一化并应用单只上限`;
+}
+
+function openDecisionModal(decisionId) {
+  const decision = findDecisionById(decisionId);
+  if (!decision) {
+    addLog(`没有找到决策记录：${decisionId}`);
+    return;
+  }
+
+  elements.decisionModalTitle.textContent = `${decision.date} 买入决策解释`;
+  elements.decisionModalMeta.textContent = `收益排名前 ${decision.topN}，最多持有 ${decision.maxHoldings} 只，同板块最多 ${decision.maxSameSector} 只，分配方式：${decision.allocationModeLabel}`;
+  elements.decisionModalBody.innerHTML = "";
+
+  const topColumns = [
+    { label: "排名", render: (row) => String(row.rank) },
+    { label: "基金", render: (row) => `${row.name}（${row.code}）` },
+    { label: "板块", render: (row) => row.sector },
+    { label: "份额", render: (row) => row.type },
+    { label: "当月收益", render: (row) => percent(row.monthlyReturn) },
+  ];
+  const selectedColumns = [
+    ...topColumns,
+    { label: "最终权重", render: (row) => percent(row.allocation) },
+    { label: "权重计算", render: allocationFormulaText },
+  ];
+  const excludedColumns = [
+    ...topColumns,
+    { label: "排除原因", render: (row) => row.reason },
+  ];
+  const timingRows = [
+    ["榜首收益", decision.timing?.bestReturn === null || decision.timing?.bestReturn === undefined ? "-" : percent(decision.timing.bestReturn)],
+    [`前 ${decision.topN} 平均收益`, decision.timing?.topAverage === null || decision.timing?.topAverage === undefined ? "-" : percent(decision.timing.topAverage)],
+    ["全市场正收益占比", decision.timing?.positiveBreadth === null || decision.timing?.positiveBreadth === undefined ? "-" : percent(decision.timing.positiveBreadth)],
+    ["入场结论", decision.timing?.shouldEnter ? "满足条件，允许买入" : "不满足条件，保持现金空仓"],
+    ["原因", (decision.timing?.reasons || []).join("；")],
+  ].map(([label, value]) => ({ label, value }));
+  const lowered = (decision.selected || []).filter((row) => row.riskLowered);
+
+  elements.decisionModalBody.append(
+    renderDecisionTable("入场判断", timingRows, [
+      { label: "项目", render: (row) => row.label },
+      { label: "结果", render: (row) => row.value },
+    ], "没有入场判断记录。"),
+    renderDecisionTable(`当月收益排名前 ${decision.topN}`, decision.topCandidates, topColumns, "本月没有可用排名数据。"),
+    renderDecisionTable("实际买入", decision.selected, selectedColumns, "本月没有买入基金。"),
+    renderDecisionTable("因同板块限制被排除", decision.excludedBySector, excludedColumns, "没有基金因为同板块限制被排除。"),
+    renderDecisionTable("因风险惩罚导致仓位降低", lowered, selectedColumns, "当前分配方式下没有基金被风险惩罚降低权重。"),
+    renderDecisionTable("因持仓数量限制未买入", decision.excludedByCapacity, excludedColumns, "没有基金因为持仓数量限制被排除。")
+  );
+
+  elements.decisionModal.hidden = false;
+  document.body.classList.add("modal-open");
+}
+
+function closeDecisionModal() {
+  elements.decisionModal.hidden = true;
+  document.body.classList.remove("modal-open");
 }
 
 function findFundByCode(code) {
@@ -1157,9 +1498,18 @@ function renderFundNavChart(fund, stats, hoverIndex = null) {
     padding.top + (1 - (value - min) / range) * (height - padding.top - padding.bottom);
 
   ctx.clearRect(0, 0, width, height);
-  ctx.strokeStyle = "#d9e0e7";
+  const borderColor = cssColor("--chart-grid");
+  const softGridColor = cssColor("--chart-grid-soft");
+  const mutedColor = cssColor("--muted");
+  const textColor = cssColor("--text");
+  const accentColor = cssColor("--accent");
+  const greenColor = cssColor("--green");
+  const redColor = cssColor("--red");
+  const surfaceColor = cssColor("--surface");
+
+  ctx.strokeStyle = borderColor;
   ctx.lineWidth = 1;
-  ctx.fillStyle = "#64707d";
+  ctx.fillStyle = mutedColor;
   ctx.font = "12px Microsoft YaHei, sans-serif";
 
   for (let i = 0; i <= 6; i += 1) {
@@ -1176,18 +1526,18 @@ function renderFundNavChart(fund, stats, hoverIndex = null) {
   for (let i = 0; i <= verticalTicks; i += 1) {
     const index = Math.round((i / verticalTicks) * (points.length - 1));
     const x = xFor(index);
-    ctx.strokeStyle = "#edf1f5";
+    ctx.strokeStyle = softGridColor;
     ctx.beginPath();
     ctx.moveTo(x, padding.top);
     ctx.lineTo(x, height - padding.bottom);
     ctx.stroke();
-    ctx.fillStyle = "#64707d";
+    ctx.fillStyle = mutedColor;
     ctx.fillText(points[index].date.slice(0, 7), Math.min(x, width - padding.right - 54), height - 16);
   }
 
   const gradient = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
-  gradient.addColorStop(0, "rgba(23, 107, 135, 0.18)");
-  gradient.addColorStop(1, "rgba(23, 107, 135, 0.02)");
+  gradient.addColorStop(0, document.documentElement.dataset.theme === "dark" ? "rgba(79, 163, 191, 0.22)" : "rgba(23, 107, 135, 0.18)");
+  gradient.addColorStop(1, document.documentElement.dataset.theme === "dark" ? "rgba(79, 163, 191, 0.03)" : "rgba(23, 107, 135, 0.02)");
   ctx.beginPath();
   points.forEach((point, index) => {
     const x = xFor(index);
@@ -1201,7 +1551,7 @@ function renderFundNavChart(fund, stats, hoverIndex = null) {
   ctx.fillStyle = gradient;
   ctx.fill();
 
-  ctx.strokeStyle = stats.return >= 0 ? "#176b87" : "#bf3b3b";
+  ctx.strokeStyle = stats.return >= 0 ? accentColor : redColor;
   ctx.lineWidth = 2;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
@@ -1214,7 +1564,7 @@ function renderFundNavChart(fund, stats, hoverIndex = null) {
   });
   ctx.stroke();
 
-  ctx.fillStyle = stats.return >= 0 ? "#1f7a4d" : "#bf3b3b";
+  ctx.fillStyle = stats.return >= 0 ? greenColor : redColor;
   ctx.beginPath();
   ctx.arc(xFor(points.length - 1), yFor(points[points.length - 1].nav), 4, 0, Math.PI * 2);
   ctx.fill();
@@ -1223,7 +1573,7 @@ function renderFundNavChart(fund, stats, hoverIndex = null) {
     const point = points[hoverIndex];
     const x = xFor(hoverIndex);
     const y = yFor(point.nav);
-    ctx.strokeStyle = "#344252";
+    ctx.strokeStyle = textColor;
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
@@ -1234,8 +1584,8 @@ function renderFundNavChart(fund, stats, hoverIndex = null) {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    ctx.fillStyle = "#ffffff";
-    ctx.strokeStyle = stats.return >= 0 ? "#176b87" : "#bf3b3b";
+    ctx.fillStyle = surfaceColor;
+    ctx.strokeStyle = stats.return >= 0 ? accentColor : redColor;
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(x, y, 5, 0, Math.PI * 2);
@@ -1365,9 +1715,14 @@ function drawChart(result) {
     padding.top + (1 - (value - min) / (max - min)) * (height - padding.top - padding.bottom);
 
   ctx.clearRect(0, 0, width, height);
-  ctx.strokeStyle = "#d9e0e7";
+  const borderColor = cssColor("--chart-grid");
+  const mutedColor = cssColor("--muted");
+  const accentColor = cssColor("--accent");
+  const redColor = cssColor("--red");
+
+  ctx.strokeStyle = borderColor;
   ctx.lineWidth = 1;
-  ctx.fillStyle = "#64707d";
+  ctx.fillStyle = mutedColor;
   ctx.font = "12px Microsoft YaHei, sans-serif";
 
   for (let i = 0; i <= 4; i += 1) {
@@ -1380,7 +1735,7 @@ function drawChart(result) {
     ctx.fillText(money(value), 10, y + 4);
   }
 
-  ctx.strokeStyle = "#bf3b3b";
+  ctx.strokeStyle = redColor;
   ctx.setLineDash([5, 6]);
   ctx.beginPath();
   ctx.moveTo(padding.left, yFor(initialCapital));
@@ -1388,7 +1743,7 @@ function drawChart(result) {
   ctx.stroke();
   ctx.setLineDash([]);
 
-  ctx.strokeStyle = "#176b87";
+  ctx.strokeStyle = accentColor;
   ctx.lineWidth = 3;
   ctx.beginPath();
   points.forEach((point, index) => {
@@ -1399,7 +1754,7 @@ function drawChart(result) {
   });
   ctx.stroke();
 
-  ctx.fillStyle = "#176b87";
+  ctx.fillStyle = accentColor;
   points.forEach((point, index) => {
     if (index % 12 !== 0 && index !== points.length - 1) return;
     const x = xFor(index);
@@ -1414,6 +1769,7 @@ function drawChart(result) {
 function renderAll(result) {
   renderSummary(result);
   renderYears(result);
+  renderDecisions(result);
   renderTrades(result);
   drawChart(result);
 }
@@ -1538,6 +1894,7 @@ async function runSimulation() {
   elements.startBtn.disabled = true;
   elements.updateDataBtn.disabled = true;
   elements.saveBtn.disabled = true;
+  elements.exportReportBtn.disabled = true;
   elements.activityLog.innerHTML = "";
   setProgress(0, 1);
 
@@ -1549,6 +1906,7 @@ async function runSimulation() {
     addLog(`初始资金：${money(initialCapital)} 元。`);
     addLog(`买入额度分配方式：${ALLOCATION_MODE_LABELS[allocationMode]}。`);
     addLog(`策略参数：前 ${strategy.topN} 名，最多持有 ${strategy.maxHoldings} 只，同板块最多 ${strategy.maxSameSector} 只，持有 ${strategy.holdingMonths} 个月，单只上限 ${percent(strategy.maxSingleAllocation)}。`);
+    addLog(`入场过滤：${strategy.entryFilterEnabled ? `启用，最低入场收益 ${percent(strategy.minEntryReturn)}，正收益占比阈值 ${percent(strategy.minPositiveBreadth)}` : "关闭，卖出后按排名继续买入"}。`);
     elements.etaText.textContent = "预计耗时：约 4 秒";
     elements.runMeta.textContent = `${period.startMonth} 至 ${period.endMonth}，正在模拟`;
     addLog(`模拟区间：${period.startMonth} 至 ${period.endMonth}。`);
@@ -1589,11 +1947,13 @@ async function runSimulation() {
     elements.etaText.textContent = "预计剩余：0.0 秒";
     addLog(`模拟完成，期末资产 ${money(result.finalValue)} 元，累计收益 ${percent(result.totalReturn)}。`);
     elements.saveBtn.disabled = false;
+    elements.exportReportBtn.disabled = false;
   } catch (error) {
     elements.runMeta.textContent = "模拟失败";
     elements.etaText.textContent = "预计耗时：-";
     addLog(`模拟失败：${error.message}`);
     elements.saveBtn.disabled = currentSimulation === null;
+    elements.exportReportBtn.disabled = currentSimulation === null;
   } finally {
     elements.startBtn.disabled = false;
     elements.updateDataBtn.disabled = false;
@@ -1622,6 +1982,200 @@ async function saveSimulation() {
   }
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function downloadTextFile(filename, content, type = "text/html;charset=utf-8") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function reportTable(headers, rows) {
+  return `
+    <table>
+      <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+      <tbody>
+        ${rows
+          .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function reportFundDetails(result) {
+  const usedCodes = new Set(result.trades.map((trade) => trade.code));
+  return normalizedFunds()
+    .filter((fund) => usedCodes.has(fund.code))
+    .map((fund) => {
+      const stats = fundNavStats(fund);
+      return [
+        fund.code,
+        fund.name,
+        fund.sector,
+        fund.type || "未知",
+        stats ? `${stats.start.date} / ${stats.start.nav.toFixed(4)}` : "-",
+        stats ? `${stats.end.date} / ${stats.end.nav.toFixed(4)}` : "-",
+        stats ? percent(stats.return) : "-",
+        stats ? percent(stats.drawdown) : "-",
+      ];
+    });
+}
+
+function buildHtmlReport(result) {
+  const assumptions = result.assumptions || {};
+  const metrics = result.metrics || performanceMetrics(result.equity, assumptions.initialCapital || DEFAULT_INITIAL_CAPITAL);
+  const monthlyRows = [];
+  for (const year of result.annual || []) {
+    for (const month of year.months || []) {
+      if (!month) continue;
+      monthlyRows.push([
+        year.year,
+        `${month.month}月`,
+        month.date,
+        money(month.start),
+        money(month.end),
+        signedMoney(month.amount),
+        percent(month.return),
+      ]);
+    }
+  }
+  const decisionRows = [];
+  const timingRows = [];
+  for (const decision of result.decisions || []) {
+    if (decision.id) {
+      timingRows.push([
+        decision.date,
+        decision.timing?.shouldEnter ? "买入" : "空仓等待",
+        decision.timing?.bestReturn === null || decision.timing?.bestReturn === undefined ? "-" : percent(decision.timing.bestReturn),
+        decision.timing?.topAverage === null || decision.timing?.topAverage === undefined ? "-" : percent(decision.timing.topAverage),
+        decision.timing?.positiveBreadth === null || decision.timing?.positiveBreadth === undefined ? "-" : percent(decision.timing.positiveBreadth),
+        (decision.timing?.reasons || []).join("；"),
+      ]);
+    }
+    for (const item of decision.selected || []) {
+      decisionRows.push([
+        decision.date,
+        item.rank,
+        item.code,
+        item.name,
+        item.sector,
+        percent(item.monthlyReturn),
+        percent(item.allocation),
+        allocationFormulaText(item),
+      ]);
+    }
+  }
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>基金模拟交易回测报告</title>
+  <style>
+    body { margin: 32px; color: #17202a; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; line-height: 1.5; }
+    h1 { margin: 0 0 8px; }
+    h2 { margin-top: 28px; border-bottom: 1px solid #d9e0e7; padding-bottom: 8px; }
+    .meta { color: #64707d; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 12px; }
+    .card { border: 1px solid #d9e0e7; border-radius: 6px; padding: 12px; background: #fbfcfd; }
+    .card span { display: block; color: #64707d; font-size: 13px; }
+    .card strong { display: block; margin-top: 6px; font-size: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+    th, td { border: 1px solid #d9e0e7; padding: 8px 10px; text-align: left; }
+    th { background: #eef3f8; }
+    tr:nth-child(even) td { background: #fbfcfd; }
+  </style>
+</head>
+<body>
+  <h1>基金模拟交易回测报告</h1>
+  <p class="meta">生成时间：${escapeHtml(new Date().toLocaleString("zh-CN"))}；模拟编号：${escapeHtml(result.id)}</p>
+
+  <h2>参数与数据来源</h2>
+  ${reportTable(["项目", "值"], [
+    ["模拟区间", assumptions.period || "-"],
+    ["初始资金", money(assumptions.initialCapital || DEFAULT_INITIAL_CAPITAL)],
+    ["买入分配", assumptions.allocationModeLabel || "-"],
+    ["收益排名前 N", assumptions.topN ?? "-"],
+    ["最多持有", assumptions.maxHoldings ?? "-"],
+    ["同板块最多", assumptions.maxSameSector ?? "-"],
+    ["持有周期（月）", assumptions.holdingMonths ?? "-"],
+    ["单只仓位上限", assumptions.maxSingleAllocation ? percent(assumptions.maxSingleAllocation) : "-"],
+    ["入场过滤", assumptions.entryFilterEnabled ? "启用" : "关闭"],
+    ["最低入场收益", assumptions.minEntryReturn === undefined ? "-" : percent(assumptions.minEntryReturn)],
+    ["正收益占比阈值", assumptions.minPositiveBreadth === undefined ? "-" : percent(assumptions.minPositiveBreadth)],
+    ["数据来源", assumptions.dataSource || dataSourceLabel()],
+  ])}
+
+  <h2>核心指标</h2>
+  <div class="grid">
+    <div class="card"><span>期末资产</span><strong>${money(result.finalValue)}</strong></div>
+    <div class="card"><span>累计收益</span><strong>${percent(result.totalReturn)}</strong></div>
+    <div class="card"><span>年化收益</span><strong>${percent(metrics.cagr)}</strong></div>
+    <div class="card"><span>最大回撤</span><strong>${percent(metrics.maxDrawdown)}</strong></div>
+    <div class="card"><span>月度胜率</span><strong>${percent(metrics.winRate)}</strong></div>
+    <div class="card"><span>收益回撤比</span><strong>${metrics.returnDrawdownRatio.toFixed(2)}</strong></div>
+  </div>
+
+  <h2>年度收益</h2>
+  ${reportTable(["年份", "期初资产", "期末资产", "年度收益", "是否达标"], (result.annual || []).map((year) => [
+    year.year,
+    money(year.start),
+    money(year.end),
+    percent(year.return),
+    year.hitTarget ? "是" : "否",
+  ]))}
+
+  <h2>月度收益</h2>
+  ${reportTable(["年份", "月份", "日期", "月初资产", "月末资产", "盈亏金额", "收益率"], monthlyRows)}
+
+  <h2>交易记录</h2>
+  ${reportTable(["日期", "操作", "基金", "代码", "板块", "买入额度", "卖出额度", "账户余额", "份额", "说明"], result.trades.map((trade) => [
+    trade.date,
+    trade.action,
+    trade.fundName,
+    trade.code,
+    trade.sector,
+    trade.buyAmount ? money(trade.buyAmount) : "-",
+    trade.sellAmount ? money(trade.sellAmount) : "-",
+    trade.balance ? money(trade.balance) : "-",
+    trade.shares?.toFixed ? trade.shares.toFixed(2) : trade.shares,
+    trade.note,
+  ]))}
+
+  <h2>择时决策</h2>
+  ${reportTable(["日期", "结论", "榜首收益", "前N平均收益", "正收益占比", "原因"], timingRows)}
+
+  <h2>买入决策解释</h2>
+  ${reportTable(["日期", "排名", "代码", "基金", "板块", "当月收益", "最终权重", "权重计算"], decisionRows)}
+
+  <h2>基金明细</h2>
+  ${reportTable(["代码", "基金", "板块", "份额类型", "起始净值", "最新净值", "区间收益", "最大回撤"], reportFundDetails(result))}
+</body>
+</html>`;
+}
+
+function exportReport() {
+  if (!currentSimulation) return;
+  const date = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+  const filename = `fund-backtest-report-${date}.html`;
+  downloadTextFile(filename, buildHtmlReport(currentSimulation));
+  addLog(`已导出回测报告：${filename}`);
+}
+
 function restoreLastResult() {
   const raw = localStorage.getItem("fund-simulator:last-result");
   if (!raw) return;
@@ -1644,8 +2198,18 @@ function restoreLastResult() {
     if (currentSimulation.assumptions?.maxSingleAllocation) {
       elements.maxSingleAllocationInput.value = String(Math.round(currentSimulation.assumptions.maxSingleAllocation * 100));
     }
+    if (typeof currentSimulation.assumptions?.entryFilterEnabled === "boolean") {
+      elements.entryFilterInput.checked = currentSimulation.assumptions.entryFilterEnabled;
+    }
+    if (currentSimulation.assumptions?.minEntryReturn !== undefined) {
+      elements.minEntryReturnInput.value = String(Math.round(currentSimulation.assumptions.minEntryReturn * 1000) / 10);
+    }
+    if (currentSimulation.assumptions?.minPositiveBreadth !== undefined) {
+      elements.minPositiveBreadthInput.value = String(Math.round(currentSimulation.assumptions.minPositiveBreadth * 1000) / 10);
+    }
     renderAll(currentSimulation);
     elements.saveBtn.disabled = false;
+    elements.exportReportBtn.disabled = false;
     elements.runMeta.textContent = "已恢复上次模拟";
     addLog("已从浏览器本地缓存恢复上次模拟结果。");
   } catch {
@@ -1656,6 +2220,8 @@ function restoreLastResult() {
 elements.startBtn.addEventListener("click", runSimulation);
 elements.updateDataBtn.addEventListener("click", updateFundData);
 elements.saveBtn.addEventListener("click", saveSimulation);
+elements.exportReportBtn.addEventListener("click", exportReport);
+elements.themeToggleBtn.addEventListener("click", toggleTheme);
 for (const button of elements.annualModeButtons) {
   button.addEventListener("click", () => setAnnualValueMode(button.dataset.annualMode));
 }
@@ -1665,8 +2231,21 @@ elements.initialCapitalInput.addEventListener("input", () => {
   if (Number.isFinite(raw) && raw > 0) elements.initialCapital.textContent = money(raw);
 });
 elements.tradeTable.addEventListener("click", (event) => {
+  const decisionButton = event.target.closest(".decision-link");
+  if (decisionButton) {
+    openDecisionModal(decisionButton.dataset.decisionId);
+    return;
+  }
   const button = event.target.closest(".fund-link");
   if (button) openFundModal(button.dataset.code);
+});
+elements.decisionCards.addEventListener("click", (event) => {
+  const decisionButton = event.target.closest(".decision-link");
+  if (decisionButton) openDecisionModal(decisionButton.dataset.decisionId);
+});
+elements.decisionModalClose.addEventListener("click", closeDecisionModal);
+elements.decisionModal.addEventListener("click", (event) => {
+  if (event.target === elements.decisionModal) closeDecisionModal();
 });
 elements.fundModalClose.addEventListener("click", closeFundModal);
 elements.fundModal.addEventListener("click", (event) => {
@@ -1705,6 +2284,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeMonthPickers();
     closeFundModal();
+    closeDecisionModal();
   }
 });
 window.addEventListener("resize", () => {
@@ -1719,6 +2299,7 @@ window.addEventListener("resize", () => {
 });
 
 async function initialize() {
+  applyTheme(document.documentElement.dataset.theme);
   getInitialCapital();
   setupPeriodInputs();
   renderDataQuality();
