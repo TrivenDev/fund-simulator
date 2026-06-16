@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import re
+import socket
 import threading
 import webbrowser
 from datetime import datetime
@@ -220,12 +221,28 @@ class FundSimulatorHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
 
 
+def detect_lan_ip() -> str | None:
+    """Best-effort detection of the LAN IP that other devices can visit."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("8.8.8.8", 80))
+            return probe.getsockname()[0]
+    except OSError:
+        return None
+
+
 def run() -> None:
-    """Start the local HTTP server and open the browser."""
-    url = "http://127.0.0.1:8765"
-    server = ThreadingHTTPServer(("127.0.0.1", 8765), FundSimulatorHandler)
-    threading.Timer(0.6, lambda: webbrowser.open(url)).start()
-    print(f"基金模拟交易系统已启动：{url}")
+    """Start the HTTP server for local and LAN browser access."""
+    port = 8765
+    local_url = f"http://127.0.0.1:{port}"
+    lan_ip = detect_lan_ip()
+    server = ThreadingHTTPServer(("0.0.0.0", port), FundSimulatorHandler)
+    threading.Timer(0.6, lambda: webbrowser.open(local_url)).start()
+    print(f"基金模拟交易系统已启动：{local_url}")
+    if lan_ip:
+        print(f"局域网访问地址：http://{lan_ip}:{port}")
+    else:
+        print(f"局域网访问地址：http://你的IPv4地址:{port}（可用 ipconfig 查看 IPv4 地址）")
     print("按 Ctrl+C 停止服务。")
     server.serve_forever()
 
