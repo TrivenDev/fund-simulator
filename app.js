@@ -153,6 +153,18 @@ function currentRawFunds() {
   return activeFundPayload.funds?.length ? activeFundPayload.funds : window.FUND_UNIVERSE;
 }
 
+function normalizedFunds() {
+  return (currentRawFunds() || [])
+    .map((fund) => ({
+      ...fund,
+      nav: (fund.nav || [])
+        .map(normalizeNavPoint)
+        .filter((point) => point.date && Number.isFinite(point.nav) && point.nav > 0)
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    }))
+    .filter((fund) => fund.nav.length > 0);
+}
+
 function latestTickerItems(limit = 80) {
   const items = [];
   for (const fund of currentRawFunds() || []) {
