@@ -6,7 +6,7 @@
     <title>模拟基金交易系统</title>
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="theme-color" content="#176b87" />
-    <link rel="stylesheet" href="./styles.css?v=20260616-entry-filter" />
+    <link rel="stylesheet" href="./styles.css?v=20260618-decision-summary" />
   </head>
   <body>
     <main class="app-shell">
@@ -179,7 +179,10 @@
             <h2>账户资产曲线</h2>
             <span id="runMeta">等待开始</span>
           </div>
-          <canvas id="equityChart" width="900" height="340"></canvas>
+          <div class="equity-chart-wrap">
+            <canvas id="equityChart" width="900" height="340"></canvas>
+            <div id="equityChartTooltip" class="chart-tooltip" hidden></div>
+          </div>
         </section>
       </section>
 
@@ -200,8 +203,12 @@
       <section class="decision-panel" aria-label="择时决策记录">
         <div class="panel-heading">
           <h2>择时决策</h2>
-          <span id="decisionCount">0 条</span>
+          <div class="decision-heading-tools">
+            <span id="decisionCount">0 条</span>
+            <button id="toggleDecisionListBtn" class="compact-button" type="button" hidden>展开全部</button>
+          </div>
         </div>
+        <div id="decisionSummary" class="decision-summary"></div>
         <div id="decisionCards" class="decision-cards"></div>
       </section>
 
@@ -263,6 +270,6 @@
     </main>
 
     <script src="./data/funds.js"></script>
-    <script type="module" src="./app.js?v=20260617-normalized-funds-fix"></script>
+    <script type="module" src="./app.js?v=20260618-decision-summary"></script>
   </body>
 </html>

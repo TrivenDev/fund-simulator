@@ -84,9 +84,12 @@ const elements = {
   activityLog: $("#activityLog"),
   runMeta: $("#runMeta"),
   equityChart: $("#equityChart"),
+  equityChartTooltip: $("#equityChartTooltip"),
   yearCards: $("#yearCards"),
   decisionCards: $("#decisionCards"),
   decisionCount: $("#decisionCount"),
+  decisionSummary: $("#decisionSummary"),
+  toggleDecisionListBtn: $("#toggleDecisionListBtn"),
   tradeTable: $("#tradeTable"),
   tradeCount: $("#tradeCount"),
   fundModal: $("#fundModal"),
@@ -118,6 +121,8 @@ let monthBounds = { min: "2022-01", max: PERIOD_MAX_MONTH };
 let openMonthPicker = null;
 let activeFundChart = null;
 let annualValueMode = "percent";
+let decisionListExpanded = false;
+const DECISION_COLLAPSED_LIMIT = 12;
 
 function applyTheme(theme) {
   const nextTheme = theme === "dark" ? "dark" : "light";
@@ -539,8 +544,16 @@ function renderYears(result) {
 
 function renderDecisions(result) {
   elements.decisionCards.innerHTML = "";
+  elements.decisionSummary.innerHTML = "";
   const actionable = (result.decisions || []).filter((decision) => decision.id);
+  const enterCount = actionable.filter((decision) => decision.action !== "wait-market").length;
+  const waitCount = actionable.length - enterCount;
+  const enterRatio = actionable.length ? enterCount / actionable.length : 0;
+  const waitRatio = actionable.length ? waitCount / actionable.length : 0;
   elements.decisionCount.textContent = `${actionable.length} 条`;
+  elements.toggleDecisionListBtn.hidden = actionable.length <= DECISION_COLLAPSED_LIMIT;
+  elements.toggleDecisionListBtn.textContent = decisionListExpanded ? "收起" : "展开全部";
+  elements.decisionCards.classList.toggle("expanded", decisionListExpanded);
   if (actionable.length === 0) {
     const empty = document.createElement("p");
     empty.className = "decision-empty";
@@ -549,8 +562,20 @@ function renderDecisions(result) {
     return;
   }
 
+  const summaryItems = [
+    ["买入决策", `${enterCount} 次`, percent(enterRatio), "enter"],
+    ["空仓等待", `${waitCount} 次`, percent(waitRatio), "wait"],
+  ];
+  for (const [label, count, ratio, type] of summaryItems) {
+    const item = document.createElement("article");
+    item.className = `decision-summary-item ${type}`;
+    item.innerHTML = `<span>${label}</span><strong>${count}</strong><small>占比 ${ratio}</small>`;
+    elements.decisionSummary.appendChild(item);
+  }
+
   const fragment = document.createDocumentFragment();
-  for (const decision of actionable) {
+  const visibleDecisions = decisionListExpanded ? actionable : actionable.slice(0, DECISION_COLLAPSED_LIMIT);
+  for (const decision of visibleDecisions) {
     const card = document.createElement("article");
     const isWait = decision.action === "wait-market";
     card.className = `decision-card ${isWait ? "wait" : "enter"}`;
@@ -558,13 +583,22 @@ function renderDecisions(result) {
     const breadth = decision.timing?.positiveBreadth;
     card.innerHTML = `
       <div>
-        <span>${decision.date}</span>
+        <div class="decision-card-top">
+          <span>${decision.date}</span>
+          <span class="decision-badge ${isWait ? "wait" : "enter"}">${isWait ? "空仓" : "买入"}</span>
+        </div>
         <strong>${isWait ? "空仓等待" : `买入 ${decision.selected?.length || 0} 只`}</strong>
         <small>榜首 ${bestReturn === null || bestReturn === undefined ? "-" : percent(bestReturn)} · 正收益占比 ${breadth === null || breadth === undefined ? "-" : percent(breadth)}</small>
       </div>
       <button class="decision-link" type="button" data-decision-id="${decision.id}">查看决策</button>
     `;
     fragment.appendChild(card);
+  }
+  if (!decisionListExpanded && actionable.length > visibleDecisions.length) {
+    const more = document.createElement("div");
+    more.className = "decision-more";
+    more.textContent = `已收起 ${actionable.length - visibleDecisions.length} 条历史决策，点击右上角“展开全部”查看。`;
+    fragment.appendChild(more);
   }
   elements.decisionCards.appendChild(fragment);
 }
@@ -947,7 +981,7 @@ function handleFundChartLeave() {
   renderFundNavChart(activeFundChart.fund, activeFundChart.stats);
 }
 
-function drawChart(result) {
+function drawChart(result, hoverIndex = null) {
   const canvas = elements.equityChart;
   const ctx = canvas.getContext("2d");
   const rect = canvas.getBoundingClientRect();
@@ -972,8 +1006,10 @@ function drawChart(result) {
   ctx.clearRect(0, 0, width, height);
   const borderColor = cssColor("--chart-grid");
   const mutedColor = cssColor("--muted");
+  const textColor = cssColor("--text");
   const accentColor = cssColor("--accent");
   const redColor = cssColor("--red");
+  const surfaceColor = cssColor("--surface");
 
   ctx.strokeStyle = borderColor;
   ctx.lineWidth = 1;
@@ -1019,6 +1055,83 @@ function drawChart(result) {
     ctx.fill();
     ctx.fillText(point.date.slice(0, 7), Math.min(x, width - 78), height - 12);
   });
+
+  if (hoverIndex !== null && points[hoverIndex]) {
+    const point = points[hoverIndex];
+    const x = xFor(hoverIndex);
+    const y = yFor(point.value);
+    ctx.strokeStyle = textColor;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x, padding.top);
+    ctx.lineTo(x, height - padding.bottom);
+    ctx.moveTo(padding.left, y);
+    ctx.lineTo(width - padding.right, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = surfaceColor;
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+function nearestEquityPointIndex(mouseX, result) {
+  const rect = elements.equityChart.getBoundingClientRect();
+  const padding = { top: 26, right: 22, bottom: 34, left: 64 };
+  const count = result.equity.length;
+  const left = padding.left;
+  const right = rect.width - padding.right;
+  const ratio = Math.max(0, Math.min(1, (mouseX - left) / Math.max(1, right - left)));
+  return Math.max(0, Math.min(count - 1, Math.round(ratio * (count - 1))));
+}
+
+function showEquityChartTooltip(index) {
+  if (!currentSimulation || !currentSimulation.equity[index]) return;
+  const rect = elements.equityChart.getBoundingClientRect();
+  const padding = { top: 26, right: 22, bottom: 34, left: 64 };
+  const points = currentSimulation.equity;
+  const point = points[index];
+  const initialCapital = currentSimulation.assumptions?.initialCapital ?? DEFAULT_INITIAL_CAPITAL;
+  const values = points.map((item) => item.value);
+  const min = Math.min(...values, initialCapital) * 0.94;
+  const max = Math.max(...values, initialCapital) * 1.04;
+  const x = padding.left + (index / Math.max(1, points.length - 1)) * (rect.width - padding.left - padding.right);
+  const y = padding.top + (1 - (point.value - min) / (max - min)) * (rect.height - padding.top - padding.bottom);
+  const pointReturn = point.value / initialCapital - 1;
+
+  elements.equityChartTooltip.innerHTML = `
+    <strong>${point.date}</strong>
+    <span>账户资产：${money(point.value)}</span>
+    <span>累计收益：${percent(pointReturn)}</span>
+    <span>现金：${money(point.cash ?? 0)}</span>
+  `;
+  elements.equityChartTooltip.hidden = false;
+
+  const tooltipWidth = 164;
+  const left = x > rect.width - tooltipWidth - 24 ? x - tooltipWidth - 12 : x + 12;
+  const top = Math.max(10, y - 46);
+  elements.equityChartTooltip.style.left = `${left}px`;
+  elements.equityChartTooltip.style.top = `${top}px`;
+}
+
+function handleEquityChartMove(event) {
+  if (!currentSimulation) return;
+  const rect = elements.equityChart.getBoundingClientRect();
+  const index = nearestEquityPointIndex(event.clientX - rect.left, currentSimulation);
+  drawChart(currentSimulation, index);
+  showEquityChartTooltip(index);
+}
+
+function handleEquityChartLeave() {
+  if (!currentSimulation) return;
+  elements.equityChartTooltip.hidden = true;
+  drawChart(currentSimulation);
 }
 
 function renderAll(result) {
@@ -1294,6 +1407,10 @@ elements.updateDataBtn.addEventListener("click", updateFundData);
 elements.saveBtn.addEventListener("click", saveSimulation);
 elements.exportReportBtn.addEventListener("click", exportReport);
 elements.themeToggleBtn.addEventListener("click", toggleTheme);
+elements.toggleDecisionListBtn.addEventListener("click", () => {
+  decisionListExpanded = !decisionListExpanded;
+  if (currentSimulation) renderDecisions(currentSimulation);
+});
 for (const button of elements.annualModeButtons) {
   button.addEventListener("click", () => setAnnualValueMode(button.dataset.annualMode));
 }
@@ -1325,6 +1442,8 @@ elements.fundModal.addEventListener("click", (event) => {
 });
 elements.fundNavChart.addEventListener("mousemove", handleFundChartMove);
 elements.fundNavChart.addEventListener("mouseleave", handleFundChartLeave);
+elements.equityChart.addEventListener("mousemove", handleEquityChartMove);
+elements.equityChart.addEventListener("mouseleave", handleEquityChartLeave);
 elements.startMonthButton.addEventListener("click", (event) => {
   event.stopPropagation();
   setMonthPickerOpen("start");

@@ -64,9 +64,9 @@ body {
 }
 
 .app-shell {
-  width: min(1440px, calc(100vw - 32px));
+  width: min(1280px, calc(100vw - 28px));
   margin: 0 auto;
-  padding: 24px 0 42px;
+  padding: 18px 0 34px;
 }
 
 .topbar,
@@ -88,8 +88,8 @@ body {
     "title controls"
     "title actions";
   align-items: center;
-  gap: 12px 24px;
-  min-height: 118px;
+  gap: 10px 18px;
+  min-height: 104px;
 }
 
 .market-ticker {
@@ -223,7 +223,7 @@ h2 {
 }
 
 h1 {
-  font-size: 32px;
+  font-size: 29px;
   line-height: 1.12;
   white-space: nowrap;
 }
@@ -457,7 +457,7 @@ button:disabled {
 .status-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(160px, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .metric,
@@ -475,12 +475,12 @@ button:disabled {
 }
 
 .metric {
-  padding: 16px;
+  padding: 14px;
 }
 
 .strategy-panel,
 .quality-panel {
-  padding: 18px;
+  padding: 14px;
 }
 
 .strategy-controls {
@@ -534,8 +534,8 @@ button:disabled {
 
 .workspace {
   display: grid;
-  grid-template-columns: 370px minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 14px;
 }
 
 .activity-panel,
@@ -543,7 +543,7 @@ button:disabled {
 .year-panel,
 .decision-panel,
 .table-panel {
-  padding: 18px;
+  padding: 14px;
 }
 
 .panel-heading {
@@ -564,6 +564,20 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.decision-heading-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.compact-button {
+  min-height: 30px;
+  padding: 0 10px;
+  border-color: var(--accent);
+  color: var(--accent);
+  font-size: 13px;
 }
 
 .segmented-control {
@@ -623,6 +637,10 @@ button:disabled {
   line-height: 1.45;
 }
 
+.equity-chart-wrap {
+  position: relative;
+}
+
 .chart-panel canvas {
   display: block;
   width: 100%;
@@ -630,12 +648,31 @@ button:disabled {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--chart-bg);
+  cursor: crosshair;
 }
 
 .year-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+  display: flex;
   gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 2px 10px;
+  scroll-snap-type: x proximity;
+}
+
+.year-cards::-webkit-scrollbar {
+  height: 10px;
+}
+
+.year-cards::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: var(--surface-subtle);
+}
+
+.year-cards::-webkit-scrollbar-thumb {
+  border: 2px solid var(--surface-subtle);
+  border-radius: 999px;
+  background: var(--border);
 }
 
 .quality-cards {
@@ -648,6 +685,49 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 10px;
+}
+
+.decision-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 220px));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.decision-summary-item {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--surface-subtle);
+}
+
+.decision-summary-item.enter {
+  border-color: var(--positive-border);
+  background: var(--positive-bg);
+}
+
+.decision-summary-item.wait {
+  border-color: var(--negative-border);
+  background: var(--negative-bg);
+}
+
+.decision-summary-item span,
+.decision-summary-item small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.decision-summary-item strong {
+  display: block;
+  margin: 4px 0;
+  font-size: 20px;
+}
+
+.decision-cards.expanded {
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .decision-card {
@@ -682,12 +762,56 @@ button:disabled {
   font-size: 17px;
 }
 
+.decision-card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.decision-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.decision-badge.enter {
+  background: var(--positive-bg);
+  color: var(--red);
+}
+
+.decision-badge.wait {
+  background: var(--negative-bg);
+  color: var(--green);
+}
+
+.decision-more {
+  display: flex;
+  align-items: center;
+  min-height: 58px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  color: var(--muted);
+  background: var(--surface-subtle);
+  font-size: 13px;
+}
+
 .year-card,
 .quality-card {
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 14px;
+  padding: 12px;
   background: var(--surface-subtle);
+}
+
+.year-card {
+  flex: 0 0 360px;
+  scroll-snap-align: start;
 }
 
 .quality-card span {
@@ -700,7 +824,7 @@ button:disabled {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .year-card-summary span {
@@ -713,7 +837,7 @@ button:disabled {
 
 .year-card-summary strong {
   flex: 0 0 auto;
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1.1;
 }
 
@@ -724,18 +848,18 @@ button:disabled {
 .month-return-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 7px;
 }
 
 .month-return-cell {
   display: grid;
   align-content: center;
-  gap: 6px;
+  gap: 5px;
+  aspect-ratio: 1 / 1;
   min-width: 0;
-  min-height: 68px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 8px 6px;
+  padding: 6px;
   background: var(--surface);
   text-align: center;
 }
@@ -748,7 +872,7 @@ button:disabled {
 }
 
 .month-return-cell strong {
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1.15;
   white-space: nowrap;
 }
@@ -971,10 +1095,11 @@ tbody tr:hover {
   cursor: crosshair;
 }
 
+.chart-tooltip,
 .fund-chart-tooltip {
   position: absolute;
   z-index: 2;
-  width: 152px;
+  width: 164px;
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
@@ -985,10 +1110,20 @@ tbody tr:hover {
   pointer-events: none;
 }
 
+.chart-tooltip strong,
+.chart-tooltip span,
 .fund-chart-tooltip strong,
 .fund-chart-tooltip span {
   display: block;
   line-height: 1.5;
+}
+
+.chart-tooltip {
+  width: 164px;
+}
+
+.fund-chart-tooltip {
+  width: 152px;
 }
 
 .decision-body {
@@ -1085,12 +1220,16 @@ tbody tr:hover {
 
   .status-grid,
   .workspace,
-  .year-cards,
   .quality-cards,
   .decision-cards,
+  .decision-summary,
   .strategy-controls,
   .fund-stats {
     grid-template-columns: 1fr;
+  }
+
+  .year-card {
+    flex-basis: min(330px, calc(100vw - 58px));
   }
 
   .month-return-grid {
